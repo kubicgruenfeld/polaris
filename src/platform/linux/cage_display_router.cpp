@@ -1071,6 +1071,12 @@ namespace cage_display_router {
       std::string autostart_status;
       const bool generated_autostart = platf::private_session_input::ensure_generated_autostart(config_dir, autostart_status);
       BOOST_LOG(generated_autostart ? info : warning) << "labwc: "sv << autostart_status;
+
+      // WLR_RENDERER=vulkan companion to rc.xml's <hdr>yes</hdr>: wlroots'
+      // color-management support does not exist in the GLES2 renderer.
+      std::string environment_status;
+      const bool generated_environment = platf::private_session_input::ensure_generated_environment(config_dir, environment_status);
+      BOOST_LOG(generated_environment ? info : warning) << "labwc: "sv << environment_status;
     }
 
     const std::string mode = format_wlr_custom_mode(width, height, refresh_hz);

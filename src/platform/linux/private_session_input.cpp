@@ -175,6 +175,12 @@ namespace platf::private_session_input {
        << "<labwc_config>\n"
        << "  <core>\n"
        << "    <xwaylandPersistence>yes</xwaylandPersistence>\n"
+       // Only takes effect where the output actually reports HDR-capable
+       // wlr_output.supported_primaries/supported_transfer_functions and the
+       // Vulkan renderer is in use (see the generated environment file below);
+       // otherwise labwc's own output_supports_hdr() check no-ops this back
+       // to 8-bit, so requesting it unconditionally here is safe.
+       << "    <hdr>yes</hdr>\n"
        << "  </core>\n"
        << "  <focus>\n"
        << "    <followMouse>no</followMouse>\n"
@@ -386,6 +392,24 @@ namespace platf::private_session_input {
 
   bool ensure_generated_themerc_override(const fs::path &config_dir, std::string &status_out) {
     return ensure_generated_companion_file(config_dir / "themerc-override", build_themerc_override(), generated_shell_marker, status_out);
+  }
+
+  std::string build_environment() {
+    std::ostringstream env;
+    env << generated_shell_marker << "\n"
+        << "# Put your own environment here to take over: a file without the line above\n"
+        << "# is left alone.\n"
+        << "# The <hdr>yes</hdr> requested in rc.xml only has an effect through the\n"
+        << "# Vulkan renderer: wlroots' color-management support does not exist in the\n"
+        << "# GLES2 renderer. -C makes labwc read this file instead of\n"
+        << "# ~/.config/labwc/environment (see labwc's paths_config_create()), so this\n"
+        << "# is the one place that reaches the private session's labwc process.\n"
+        << "WLR_RENDERER=vulkan\n";
+    return env.str();
+  }
+
+  bool ensure_generated_environment(const fs::path &config_dir, std::string &status_out) {
+    return ensure_generated_companion_file(config_dir / "environment", build_environment(), generated_shell_marker, status_out);
   }
 
   bool ensure_generated_menu_xml(const fs::path &config_dir, std::string &status_out) {

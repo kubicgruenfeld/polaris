@@ -89,6 +89,18 @@ TEST(PrivateSessionInputTests, NothingToIgnoreProducesNoLibinputBlock) {
   EXPECT_NE(std::string::npos, rc.find("</labwc_config>"));
 }
 
+TEST(PrivateSessionInputTests, GeneratedRcXmlRequestsHdr) {
+  const auto rc = platf::private_session_input::build_rc_xml({});
+  // labwc's own output_supports_hdr() no-ops this back to 8-bit wherever the
+  // compositor or output doesn't actually support it, so requesting it
+  // unconditionally is safe even without a patched wlroots/labwc.
+  EXPECT_NE(std::string::npos, rc.find("<core>"));
+  EXPECT_NE(std::string::npos, rc.find("<hdr>yes</hdr>"));
+  // Must be nested inside <core>, not floating at the top level.
+  EXPECT_LT(rc.find("<core>"), rc.find("<hdr>yes</hdr>"));
+  EXPECT_LT(rc.find("<hdr>yes</hdr>"), rc.find("</core>"));
+}
+
 TEST(PrivateSessionInputTests, GeneratedRcXmlIsWrittenAndRefreshed) {
   const auto dir = make_temp_dir("rc-generated");
   std::string status;
@@ -204,6 +216,28 @@ TEST(PrivateSessionInputTests, GeneratedThemeGivesTheMenuRoomAndYieldsToTheUsers
   }
   EXPECT_FALSE(platf::private_session_input::ensure_generated_themerc_override(dir, status));
   EXPECT_EQ(read_file(dir / "themerc-override"), "menu.width.max: 300\n");
+  std::filesystem::remove_all(dir);
+}
+
+TEST(PrivateSessionInputTests, GeneratedEnvironmentSetsVulkanRendererAndYieldsToTheUsersOwn) {
+  const auto env = platf::private_session_input::build_environment();
+  EXPECT_EQ(env.rfind(platf::private_session_input::generated_shell_marker, 0), 0U);
+  EXPECT_NE(std::string::npos, env.find("\nWLR_RENDERER=vulkan\n"));
+
+  const auto dir = make_temp_dir("environment-generated");
+  std::string status;
+  ASSERT_TRUE(platf::private_session_input::ensure_generated_environment(dir, status));
+  EXPECT_EQ(read_file(dir / "environment"), env);
+  EXPECT_NE(std::string::npos, status.find("~/.config/labwc-polaris/environment"));
+  EXPECT_EQ(std::string::npos, status.find(dir.string()));
+
+  // An environment file without the marker is the user's own.
+  {
+    std::ofstream own(dir / "environment", std::ios::trunc);
+    own << "WLR_RENDERER=gles2\n";
+  }
+  EXPECT_FALSE(platf::private_session_input::ensure_generated_environment(dir, status));
+  EXPECT_EQ(read_file(dir / "environment"), "WLR_RENDERER=gles2\n");
   std::filesystem::remove_all(dir);
 }
 

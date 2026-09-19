@@ -121,4 +121,21 @@ namespace platf::private_session_input {
    */
   bool ensure_generated_themerc_override(const std::filesystem::path &config_dir, std::string &status_out);
 
+  /**
+   * @brief Build the environment file for the private session.
+   *
+   * Sets WLR_RENDERER=vulkan: wlroots' color-management support (the <hdr>
+   * request in rc.xml) is Vulkan-only, and labwc's -C flag makes it read
+   * this file in place of ~/.config/labwc/environment, the only place an
+   * env var reliably reaches the private labwc process.
+   */
+  std::string build_environment();
+
+  /**
+   * @brief Write the generated environment file into the private session's config dir.
+   *
+   * A user's own environment file (no generated marker) is left untouched.
+   */
+  bool ensure_generated_environment(const std::filesystem::path &config_dir, std::string &status_out);
+
 }  // namespace platf::private_session_input
