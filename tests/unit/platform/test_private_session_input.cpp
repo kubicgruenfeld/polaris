@@ -226,14 +226,26 @@ TEST(PrivateSessionInputTests, GeneratedThemeGivesTheMenuRoomAndYieldsToTheUsers
   std::filesystem::remove_all(dir);
 }
 
-TEST(PrivateSessionInputTests, GeneratedEnvironmentSetsVulkanRendererAndYieldsToTheUsersOwn) {
-  const auto env = platf::private_session_input::build_environment();
+TEST(PrivateSessionInputTests, GeneratedEnvironmentSetsVulkanRendererOnlyForHdrSessions) {
+  // wlroots calls its Vulkan renderer experimental; only an HDR session, which
+  // needs it for colour management, is switched onto it.
+  const auto sdr_env = platf::private_session_input::build_environment(/* hdr_requested */ false);
+  EXPECT_EQ(sdr_env.rfind(platf::private_session_input::generated_shell_marker, 0), 0U);
+  EXPECT_EQ(std::string::npos, sdr_env.find("WLR_RENDERER"));
+
+  const auto env = platf::private_session_input::build_environment(/* hdr_requested */ true);
   EXPECT_EQ(env.rfind(platf::private_session_input::generated_shell_marker, 0), 0U);
   EXPECT_NE(std::string::npos, env.find("\nWLR_RENDERER=vulkan\n"));
 
+  // An SDR session must still rewrite the file, or a previous HDR session's
+  // override lingers and keeps the renderer switched.
   const auto dir = make_temp_dir("environment-generated");
   std::string status;
-  ASSERT_TRUE(platf::private_session_input::ensure_generated_environment(dir, status));
+  ASSERT_TRUE(platf::private_session_input::ensure_generated_environment(dir, /* hdr_requested */ true, status));
+  ASSERT_TRUE(platf::private_session_input::ensure_generated_environment(dir, /* hdr_requested */ false, status));
+  EXPECT_EQ(std::string::npos, read_file(dir / "environment").find("WLR_RENDERER"));
+
+  ASSERT_TRUE(platf::private_session_input::ensure_generated_environment(dir, /* hdr_requested */ true, status));
   EXPECT_EQ(read_file(dir / "environment"), env);
   EXPECT_NE(std::string::npos, status.find("~/.config/labwc-polaris/environment"));
   EXPECT_EQ(std::string::npos, status.find(dir.string()));
@@ -243,7 +255,7 @@ TEST(PrivateSessionInputTests, GeneratedEnvironmentSetsVulkanRendererAndYieldsTo
     std::ofstream own(dir / "environment", std::ios::trunc);
     own << "WLR_RENDERER=gles2\n";
   }
-  EXPECT_FALSE(platf::private_session_input::ensure_generated_environment(dir, status));
+  EXPECT_FALSE(platf::private_session_input::ensure_generated_environment(dir, /* hdr_requested */ true, status));
   EXPECT_EQ(read_file(dir / "environment"), "WLR_RENDERER=gles2\n");
   std::filesystem::remove_all(dir);
 }

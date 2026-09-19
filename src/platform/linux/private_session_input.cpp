@@ -400,22 +400,40 @@ namespace platf::private_session_input {
     return ensure_generated_companion_file(config_dir / "themerc-override", build_themerc_override(), generated_shell_marker, status_out);
   }
 
-  std::string build_environment() {
+  std::string build_environment(bool hdr_requested) {
     std::ostringstream env;
     env << generated_shell_marker << "\n"
         << "# Put your own environment here to take over: a file without the line above\n"
-        << "# is left alone.\n"
-        << "# The <hdr>yes</hdr> requested in rc.xml only has an effect through the\n"
-        << "# Vulkan renderer: wlroots' color-management support does not exist in the\n"
-        << "# GLES2 renderer. -C makes labwc read this file instead of\n"
-        << "# ~/.config/labwc/environment (see labwc's paths_config_create()), so this\n"
-        << "# is the one place that reaches the private session's labwc process.\n"
-        << "WLR_RENDERER=vulkan\n";
+        << "# is left alone.\n";
+
+    // wlroots' own log calls the Vulkan renderer "only experimental and not
+    // expected to be ready for daily use", so it is asked for only by a
+    // session that needs it: wlroots implements color management there and
+    // nowhere else, so it is required for the <hdr> request in rc.xml and
+    // pointless for anything else. The file is still written for an SDR
+    // session, without the variable, so a previous HDR session's file does
+    // not linger and silently keep the renderer switched.
+    if (hdr_requested) {
+      env << "# HDR session: wlroots implements color management in the Vulkan\n"
+          << "# renderer only, so the <hdr>yes</hdr> in rc.xml needs this. -C makes\n"
+          << "# labwc read this file instead of ~/.config/labwc/environment (see\n"
+          << "# labwc's paths_config_create()), so this is the one place that\n"
+          << "# reaches the private session's labwc process.\n"
+          << "WLR_RENDERER=vulkan\n";
+    } else {
+      env << "# SDR session: no renderer override, so labwc picks its default.\n";
+    }
+
     return env.str();
   }
 
-  bool ensure_generated_environment(const fs::path &config_dir, std::string &status_out) {
-    return ensure_generated_companion_file(config_dir / "environment", build_environment(), generated_shell_marker, status_out);
+  bool ensure_generated_environment(const fs::path &config_dir, bool hdr_requested, std::string &status_out) {
+    return ensure_generated_companion_file(
+      config_dir / "environment",
+      build_environment(hdr_requested),
+      generated_shell_marker,
+      status_out
+    );
   }
 
   bool ensure_generated_menu_xml(const fs::path &config_dir, std::string &status_out) {

@@ -133,18 +133,25 @@ namespace platf::private_session_input {
   /**
    * @brief Build the environment file for the private session.
    *
-   * Sets WLR_RENDERER=vulkan: wlroots' color-management support (the <hdr>
-   * request in rc.xml) is Vulkan-only, and labwc's -C flag makes it read
-   * this file in place of ~/.config/labwc/environment, the only place an
-   * env var reliably reaches the private labwc process.
+   * For an HDR session, sets WLR_RENDERER=vulkan: wlroots implements colour
+   * management in the Vulkan renderer only, so the <hdr> request in rc.xml
+   * needs it, and labwc's -C flag makes it read this file in place of
+   * ~/.config/labwc/environment, the only place an env var reliably reaches
+   * the private labwc process. An SDR session gets the file without the
+   * override — wlroots calls that renderer experimental, and a session that
+   * does not need it should not be switched onto it.
    */
-  std::string build_environment();
+  std::string build_environment(bool hdr_requested);
 
   /**
    * @brief Write the generated environment file into the private session's config dir.
    *
    * A user's own environment file (no generated marker) is left untouched.
    */
-  bool ensure_generated_environment(const std::filesystem::path &config_dir, std::string &status_out);
+  bool ensure_generated_environment(
+    const std::filesystem::path &config_dir,
+    bool hdr_requested,
+    std::string &status_out
+  );
 
 }  // namespace platf::private_session_input

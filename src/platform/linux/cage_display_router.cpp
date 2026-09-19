@@ -1077,7 +1077,7 @@ namespace cage_display_router {
       // WLR_RENDERER=vulkan companion to rc.xml's <hdr>yes</hdr>: wlroots'
       // color-management support does not exist in the GLES2 renderer.
       std::string environment_status;
-      const bool generated_environment = platf::private_session_input::ensure_generated_environment(config_dir, environment_status);
+      const bool generated_environment = platf::private_session_input::ensure_generated_environment(config_dir, hdr_requested, environment_status);
       BOOST_LOG(generated_environment ? info : warning) << "labwc: "sv << environment_status;
     }
 
