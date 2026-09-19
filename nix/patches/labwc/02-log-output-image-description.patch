@@ -1,0 +1,56 @@
+--- a/src/output.c
++++ b/src/output.c
+@@ -537,6 +537,27 @@
+ 	lab_wlr_scene_output_commit(output->scene_output, &output->pending);
+ 
+ 	/*
++	 * Polaris: report the image description the output actually ended up
++	 * with. Every client's preferred image description is derived from
++	 * this (see get_surface_preferred_image_description() in wlroots'
++	 * types/scene/surface.c), so when it is NULL or SDR every client is
++	 * told plain sRGB no matter what <hdr> asked for, and a nested
++	 * compositor such as gamescope then refuses to offer HDR to the game
++	 * it hosts. Without this the difference is invisible.
++	 */
++	{
++		const struct wlr_output_image_description *desc =
++			wlr_output->image_description;
++		if (desc) {
++			wlr_log(WLR_INFO, "output %s image description: transfer_function=%d primaries=%d",
++				wlr_output->name, (int)desc->transfer_function, (int)desc->primaries);
++		} else {
++			wlr_log(WLR_INFO, "output %s has no image description; clients will be told sRGB",
++				wlr_output->name);
++		}
++	}
++
++	/*
+ 	 * Collect the effective resolution after the final commit.
+ 	 */
+ 	wlr_output_effective_resolution(wlr_output,
+--- a/src/server.c
++++ b/src/server.c
+@@ -608,6 +608,15 @@
+ 	 * | output->layer_tree[0]              | background layer surfaces (e.g. swaybg)
+ 	 */
+ 
++	/*
++	 * Polaris: without the colour manager no client is ever told a
++	 * preferred image description, so every client falls back to sRGB and
++	 * a nested compositor refuses to offer HDR to what it hosts.
++	 */
++	wlr_log(WLR_INFO, "colour management: input_color_transform=%d output_color_transform=%d",
++		(int)server.renderer->features.input_color_transform,
++		(int)server.renderer->features.output_color_transform);
++
+ 	if (server.renderer->features.input_color_transform) {
+ 		const enum wp_color_manager_v1_render_intent render_intents[] = {
+ 			WP_COLOR_MANAGER_V1_RENDER_INTENT_PERCEPTUAL,
+@@ -640,6 +649,7 @@
+ 		free(primaries);
+ 
+ 		if (cm) {
++			wlr_log(WLR_INFO, "colour management: color manager attached to scene");
+ 			wlr_scene_set_color_manager_v1(server.scene, cm);
+ 		} else {
+ 			wlr_log(WLR_ERROR, "unable to create color manager");

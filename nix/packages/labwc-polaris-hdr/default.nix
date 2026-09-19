@@ -30,5 +30,8 @@
     # POLARIS-UPSTREAM-REMOVE when wlroots' headless backend sets HDR
     # capability bits itself (e.g. from a caller-supplied descriptor).
     ../../patches/labwc/01-headless-hdr-colorimetry.patch
+    # Diagnostic: what image description the output actually ended up with,
+    # which is what every client's preferred description is derived from.
+    ../../patches/labwc/02-log-output-image-description.patch
   ];
 })
