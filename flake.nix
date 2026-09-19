@@ -51,10 +51,16 @@
         gamescope-polaris = final.callPackage ./nix/packages/gamescope-polaris { };
         gamescope-hdr = final.gamescope-polaris; # back-compat alias
         xdg-desktop-portal-gamescope = final.callPackage ./nix/packages/xdg-desktop-portal-gamescope { };
-        # `labwc = prev.labwc`, not `final.labwc`: callPackage would otherwise
-        # resolve labwc-polaris-hdr's own `{ labwc }` argument back to the
-        # overridden `final.labwc` below and recurse forever.
-        labwc-polaris-hdr = final.callPackage ./nix/packages/labwc-polaris-hdr { labwc = prev.labwc; };
+        # `prev.wlroots_0_20`/`prev.labwc`, not `final.*`: callPackage would
+        # otherwise resolve these packages' own arguments back to the
+        # overridden `final` attributes below and recurse forever.
+        wlroots-polaris-hdr = final.callPackage ./nix/packages/wlroots-polaris-hdr {
+          wlroots_0_20 = prev.wlroots_0_20;
+        };
+        labwc-polaris-hdr = final.callPackage ./nix/packages/labwc-polaris-hdr {
+          labwc = prev.labwc;
+          wlrootsPolarisHdr = final.wlroots-polaris-hdr;
+        };
         # Replaces plain `labwc` so a NixOS config that already does
         # `environment.systemPackages = [ pkgs.labwc ]` (see docs/launch-modes.md,
         # docs/stream-paths.md — labwc isn't vendored/packaged by Polaris itself)
@@ -76,6 +82,7 @@
             gamescope-polaris
             gamescope-hdr
             xdg-desktop-portal-gamescope
+            wlroots-polaris-hdr
             labwc-polaris-hdr
             polaris-stream
             ;

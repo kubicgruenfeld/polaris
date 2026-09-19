@@ -12,10 +12,18 @@
 # nixpkgs-pinned labwc already has everything this patch needs, so it is
 # applied directly on top via overrideAttrs.
 #
+# Also built against wlroots-polaris-hdr, not stock wlroots_0_20: the
+# labwc patch alone changes what labwc tries to commit on every headless
+# output reconfiguration (not just HDR ones), and the stock headless
+# backend rejects that commit outright. See nix/patches/wlroots/README.md.
+#
 # Drop checklist: nix/patches/labwc/README.md (grep POLARIS-UPSTREAM-REMOVE).
-{ labwc }:
+{
+  labwc,
+  wlrootsPolarisHdr,
+}:
 
-labwc.overrideAttrs (old: {
+(labwc.override { wlroots_0_20 = wlrootsPolarisHdr; }).overrideAttrs (old: {
   pname = "labwc-polaris-hdr";
 
   patches = (old.patches or [ ]) ++ [

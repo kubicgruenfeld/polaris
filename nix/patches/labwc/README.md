@@ -34,6 +34,17 @@ to. Setting the capability bits in `handle_new_output()`, gated on
 `src/output-virtual.c`), is the smallest change that lets the rest of
 labwc's existing HDR machinery run unmodified.
 
+## Required companion patch
+
+Do not ship this patch without `nix/patches/wlroots/01-headless-backend-accept-render-format-and-image-description.patch`
+(applied via `wlroots-polaris-hdr`, which `labwc-polaris-hdr` builds
+against instead of stock `wlroots_0_20`). Setting `supported_primaries`/
+`supported_transfer_functions` changes what labwc tries to commit on
+*every* headless output reconfiguration, not only HDR ones — without the
+wlroots patch, the stock headless backend rejects that commit outright and
+breaks `headless_stream` output configuration entirely. See
+`nix/patches/wlroots/README.md` for the full trace.
+
 ## What this patch does **not** do
 
 It only unlocks compositor-side HDR (10-bit render format selection +
@@ -42,9 +53,11 @@ not touch:
 
 - Requesting `Hdr.core` in the `rc.xml` Polaris generates for the private
   labwc instance (`src/platform/linux/stream_runtime_labwc.cpp` and
-  friends) — `LAB_RENDER_BIT_DEPTH_DEFAULT` auto-detects via
-  `output_supports_hdr()`, so this may already be enough, but it is
-  unverified against a live host.
+  friends). `LAB_RENDER_BIT_DEPTH_DEFAULT` does **not** auto-upgrade to
+  10-bit: `output_state_setup_hdr()` only derives the target bit depth from
+  the output's *current* `render_format` when depth is unset, and a fresh
+  output starts 8-bit. `<Hdr.core>yes</Hdr.core>` (or equivalent) has to be
+  requested explicitly for anything to attempt 10-bit at all.
 - Forcing the Vulkan renderer (`WLR_RENDERER=vulkan`) for the private
   compositor process — wlroots' color-management implementation is
   Vulkan-only in 0.20.x (`render/vulkan/`, not `render/gles2/`).

@@ -1,0 +1,13 @@
+--- a/backend/headless/output.c
++++ b/backend/headless/output.c
+@@ -10,7 +10,9 @@
+ static const uint32_t SUPPORTED_OUTPUT_STATE =
+ 	WLR_OUTPUT_STATE_BACKEND_OPTIONAL |
+ 	WLR_OUTPUT_STATE_BUFFER |
+ 	WLR_OUTPUT_STATE_ENABLED |
+-	WLR_OUTPUT_STATE_MODE;
++	WLR_OUTPUT_STATE_MODE |
++	WLR_OUTPUT_STATE_RENDER_FORMAT |
++	WLR_OUTPUT_STATE_IMAGE_DESCRIPTION;
+
+ static size_t last_output_num = 0;

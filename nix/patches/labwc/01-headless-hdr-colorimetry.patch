@@ -13,7 +13,7 @@
  #include <wlr/types/wlr_ext_workspace_v1.h>
  #include <wlr/types/wlr_gamma_control_v1.h>
  #include <wlr/types/wlr_output.h>
-@@ -609,14 +609,27 @@ handle_new_output(struct wl_listener *listener, void *data)
+@@ -609,14 +609,30 @@ handle_new_output(struct wl_listener *listener, void *data)
  	if (wlr_output_is_wl(wlr_output)) {
  		GString *title = g_string_new(server.title_fmt);
  		g_string_replace(title, "%o", wlr_output->name, 0);
