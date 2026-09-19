@@ -166,16 +166,48 @@ namespace wl {
       return formatted;
     }
 
-    int extcopy_format_rank(std::uint32_t format) {
+    bool extcopy_format_is_10bit(std::uint32_t format) {
+      switch (format) {
+        case DRM_FORMAT_XBGR2101010:
+        case DRM_FORMAT_ABGR2101010:
+        case DRM_FORMAT_XRGB2101010:
+        case DRM_FORMAT_ARGB2101010:
+          return true;
+        default:
+          return false;
+      }
+    }
+
+    int extcopy_format_rank(std::uint32_t format, bool prefer_10bit) {
+      if (prefer_10bit) {
+        switch (format) {
+          // XBGR2101010 before XRGB2101010: on the NVIDIA proprietary driver
+          // the XRGB ordering fails to allocate through GBM while this one
+          // succeeds. See nix/patches/labwc/README.md for the measurement.
+          case DRM_FORMAT_XBGR2101010:
+            return 0;
+          case DRM_FORMAT_ABGR2101010:
+            return 1;
+          case DRM_FORMAT_XRGB2101010:
+            return 2;
+          case DRM_FORMAT_ARGB2101010:
+            return 3;
+          default:
+            // Fall through to the 8-bit ranking below, which is numbered so
+            // that any 10-bit format always outranks any 8-bit one.
+            break;
+        }
+      }
+
       switch (format) {
         case DRM_FORMAT_XBGR8888:
-          return 0;
+          return 10;
         case DRM_FORMAT_ABGR8888:
-          return 1;
+          return 11;
         case DRM_FORMAT_XRGB8888:
-          return 2;
+          return 12;
         case DRM_FORMAT_ARGB8888:
-          return 3;
+          return 13;
         default:
           return 100;
       }
@@ -1449,6 +1481,10 @@ namespace wl {
     return status == READY;
   }
 
+  bool extcopy_t::format_is_10bit(std::uint32_t format) {
+    return extcopy_format_is_10bit(format);
+  }
+
   bool extcopy_t::choose_format() {
     if (dmabuf_formats.empty()) {
       BOOST_LOG(info) << "Extcopy DMA-BUF capture: compositor did not advertise any DMA-BUF formats"sv;
@@ -1462,8 +1498,8 @@ namespace wl {
         continue;
       }
 
-      auto candidate_rank = extcopy_format_rank(candidate.format);
-      auto best_rank = extcopy_format_rank(best->format);
+      auto candidate_rank = extcopy_format_rank(candidate.format, prefer_10bit);
+      auto best_rank = extcopy_format_rank(best->format, prefer_10bit);
       if (candidate_rank < best_rank) {
         best = &candidate;
         continue;
@@ -1482,10 +1518,20 @@ namespace wl {
     chosen_format = *best;
     chosen_format_valid = true;
 
+    const bool got_10bit = extcopy_format_is_10bit(chosen_format.format);
     BOOST_LOG(info) << "Extcopy DMA-BUF capture selected format="sv
                     << chosen_format.format
+                    << " ten_bit="sv << got_10bit
+                    << " requested_ten_bit="sv << prefer_10bit
                     << " explicit_modifiers=["sv << modifier_list_string(chosen_format.modifiers)
                     << "] implicit_modifier="sv << chosen_format.implicit_modifier;
+    if (prefer_10bit && !got_10bit) {
+      // The stream asked for HDR but the compositor offered nothing 10-bit.
+      // Capture still works; video.cpp falls the stream back to SDR because
+      // is_hdr() follows the format actually negotiated here.
+      BOOST_LOG(warning) << "Extcopy DMA-BUF capture wanted a 10-bit format for HDR but the "
+                            "compositor advertised none; streaming SDR"sv;
+    }
     return true;
   }
 

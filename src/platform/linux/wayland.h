@@ -276,6 +276,23 @@ namespace wl {
       return current_frame->sd.modifier;
     }
 
+    /// Whether a DRM fourcc carries 10 bits per RGB channel.
+    static bool format_is_10bit(std::uint32_t format);
+
+    /// The DRM fourcc negotiated with the compositor, once a session exists.
+    std::optional<std::uint32_t> capture_fourcc() const {
+      if (!chosen_format_valid) {
+        return std::nullopt;
+      }
+
+      return chosen_format.format;
+    }
+
+    /// Rank 10-bit formats above 8-bit ones when picking what to capture.
+    /// Only an HDR stream sets this: an SDR stream keeps the 8-bit path it
+    /// has always used.
+    bool prefer_10bit {false};
+
     const extcopy_timing_sample_t &last_timing_sample() const {
       return timing_tracker.last_sample();
     }

@@ -52,7 +52,8 @@ namespace cage_display_router {
     bool force_windowed = false,
     bool allow_mangohud = true,
     const std::string &session_instance_id = "",
-    int requested_refresh_hz = 0
+    int requested_refresh_hz = 0,
+    bool hdr_requested = false
   );
 
   /**

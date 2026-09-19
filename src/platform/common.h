@@ -321,6 +321,7 @@ namespace platf {
 
   enum class frame_format_e {
     bgra8,
+    rgb10,  ///< 10 bits per RGB channel, packed (e.g. XBGR2101010)
     rgba16f,
     nv12,
     p010,
@@ -338,6 +339,7 @@ namespace platf {
     return #x##sv
     switch (format) {
       _CONVERT(bgra8);
+      _CONVERT(rgb10);
       _CONVERT(rgba16f);
       _CONVERT(nv12);
       _CONVERT(p010);

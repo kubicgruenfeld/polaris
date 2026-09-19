@@ -966,7 +966,8 @@ namespace cage_display_router {
     bool force_windowed,
     bool allow_mangohud,
     const std::string &session_instance_id,
-    int requested_refresh_hz
+    int requested_refresh_hz,
+    bool hdr_requested
   ) {
     const auto startup_begin = std::chrono::steady_clock::now();
 
@@ -1049,6 +1050,7 @@ namespace cage_display_router {
       const bool generated = platf::private_session_input::ensure_generated_rc_xml(
         config_dir,
         platf::private_session_input::enumerate_host_input_devices(),
+        hdr_requested,
         rc_status
       );
       BOOST_LOG(generated ? info : warning) << "labwc: "sv << rc_status;

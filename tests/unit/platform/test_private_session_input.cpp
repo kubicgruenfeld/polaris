@@ -83,22 +83,26 @@ TEST(PrivateSessionInputTests, NothingToIgnoreProducesNoLibinputBlock) {
 
   EXPECT_TRUE(platf::private_session_input::build_libinput_isolation_block(devices).empty());
 
-  const auto rc = platf::private_session_input::build_rc_xml(devices);
+  const auto rc = platf::private_session_input::build_rc_xml(devices, /* hdr_requested */ false);
   EXPECT_EQ(std::string::npos, rc.find("<libinput>"));
   EXPECT_NE(std::string::npos, rc.find("<labwc_config>"));
   EXPECT_NE(std::string::npos, rc.find("</labwc_config>"));
 }
 
-TEST(PrivateSessionInputTests, GeneratedRcXmlRequestsHdr) {
-  const auto rc = platf::private_session_input::build_rc_xml({});
-  // labwc's own output_supports_hdr() no-ops this back to 8-bit wherever the
-  // compositor or output doesn't actually support it, so requesting it
-  // unconditionally is safe even without a patched wlroots/labwc.
-  EXPECT_NE(std::string::npos, rc.find("<core>"));
-  EXPECT_NE(std::string::npos, rc.find("<hdr>yes</hdr>"));
+TEST(PrivateSessionInputTests, GeneratedRcXmlRequestsHdrOnlyWhenTheSessionStreamsIt) {
+  // An SDR session must not ask for HDR. labwc drives the output as BT.2020/PQ
+  // the moment it is asked, and a PQ output that capture and encode still treat
+  // as Rec.709 reaches the client washed out.
+  const auto sdr = platf::private_session_input::build_rc_xml({}, /* hdr_requested */ false);
+  EXPECT_EQ(std::string::npos, sdr.find("<hdr>"));
+  EXPECT_NE(std::string::npos, sdr.find("<core>"));
+  EXPECT_NE(std::string::npos, sdr.find("</core>"));
+
+  const auto hdr = platf::private_session_input::build_rc_xml({}, /* hdr_requested */ true);
+  EXPECT_NE(std::string::npos, hdr.find("<hdr>yes</hdr>"));
   // Must be nested inside <core>, not floating at the top level.
-  EXPECT_LT(rc.find("<core>"), rc.find("<hdr>yes</hdr>"));
-  EXPECT_LT(rc.find("<hdr>yes</hdr>"), rc.find("</core>"));
+  EXPECT_LT(hdr.find("<core>"), hdr.find("<hdr>yes</hdr>"));
+  EXPECT_LT(hdr.find("<hdr>yes</hdr>"), hdr.find("</core>"));
 }
 
 TEST(PrivateSessionInputTests, GeneratedRcXmlIsWrittenAndRefreshed) {
@@ -108,6 +112,7 @@ TEST(PrivateSessionInputTests, GeneratedRcXmlIsWrittenAndRefreshed) {
   ASSERT_TRUE(platf::private_session_input::ensure_generated_rc_xml(
     dir,
     {{"Logitech G502", "/sys/class/input/event1"}},
+    /* hdr_requested */ false,
     status
   ));
   EXPECT_NE(std::string::npos, read_file(dir / "rc.xml").find("Logitech G502"));
@@ -118,6 +123,7 @@ TEST(PrivateSessionInputTests, GeneratedRcXmlIsWrittenAndRefreshed) {
   ASSERT_TRUE(platf::private_session_input::ensure_generated_rc_xml(
     dir,
     {{"Keychron K2", "/sys/class/input/event2"}},
+    /* hdr_requested */ false,
     status
   ));
   const auto refreshed = read_file(dir / "rc.xml");
@@ -133,10 +139,10 @@ TEST(PrivateSessionInputTests, UnchangedHardwareLeavesTheGeneratedFileUntouched)
   const std::vector<input_device_t> devices {{"Logitech G502", "/sys/class/input/event1"}};
 
   std::string status;
-  ASSERT_TRUE(platf::private_session_input::ensure_generated_rc_xml(dir, devices, status));
+  ASSERT_TRUE(platf::private_session_input::ensure_generated_rc_xml(dir, devices, /* hdr_requested */ false, status));
   const auto first_write = std::filesystem::last_write_time(dir / "rc.xml");
 
-  ASSERT_TRUE(platf::private_session_input::ensure_generated_rc_xml(dir, devices, status));
+  ASSERT_TRUE(platf::private_session_input::ensure_generated_rc_xml(dir, devices, /* hdr_requested */ false, status));
   EXPECT_EQ(first_write, std::filesystem::last_write_time(dir / "rc.xml"))
     << "an identical config should not be rewritten";
   EXPECT_NE(std::string::npos, status.find("already current"));
@@ -158,6 +164,7 @@ TEST(PrivateSessionInputTests, UserAuthoredRcXmlIsNeverOverwritten) {
   EXPECT_FALSE(platf::private_session_input::ensure_generated_rc_xml(
     dir,
     {{"Logitech G502", "/sys/class/input/event1"}},
+    /* hdr_requested */ false,
     status
   ));
   EXPECT_EQ(user_config, read_file(dir / "rc.xml"));

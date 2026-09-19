@@ -49,8 +49,15 @@ namespace platf::private_session_input {
    */
   std::string build_libinput_isolation_block(const std::vector<input_device_t> &devices);
 
-  /// Build the full kiosk rc.xml for the private session.
-  std::string build_rc_xml(const std::vector<input_device_t> &devices);
+  /**
+   * @brief Build the full kiosk rc.xml for the private session.
+   * @param devices Devices seen on the host, for the input isolation block.
+   * @param hdr_requested Whether this session will actually stream HDR. Only
+   *        then is labwc asked for an HDR output: it drives the output as
+   *        BT.2020/PQ once asked, and a PQ output that capture and encode
+   *        still treat as SDR reaches the client washed out.
+   */
+  std::string build_rc_xml(const std::vector<input_device_t> &devices, bool hdr_requested);
 
   /**
    * @brief Write the generated rc.xml into the private session's config dir.
@@ -60,12 +67,14 @@ namespace platf::private_session_input {
    *
    * @param config_dir Directory passed to labwc with -C.
    * @param devices Devices seen on the host.
+   * @param hdr_requested Whether this session will actually stream HDR.
    * @param status_out Human readable outcome, for the log.
    * @return true when the private session's rc.xml is the generated one.
    */
   bool ensure_generated_rc_xml(
     const std::filesystem::path &config_dir,
     const std::vector<input_device_t> &devices,
+    bool hdr_requested,
     std::string &status_out
   );
 

@@ -30,7 +30,8 @@ namespace stream_runtime {
       bool force_windowed,
       bool allow_mangohud,
       const std::string &session_instance_id,
-      int requested_refresh_hz
+      int requested_refresh_hz,
+      bool hdr_requested
     ) {
       return cage_display_router::start(
         width,
@@ -40,7 +41,8 @@ namespace stream_runtime {
         force_windowed,
         allow_mangohud,
         session_instance_id,
-        requested_refresh_hz
+        requested_refresh_hz,
+        hdr_requested
       );
     }
 
@@ -220,7 +222,8 @@ namespace stream_runtime {
           params.force_windowed,
           params.allow_mangohud,
           params.session_instance_id,
-          params.requested_refresh_hz
+          params.requested_refresh_hz,
+          params.hdr_requested
         );
       }
 

@@ -30,6 +30,11 @@ namespace stream_runtime {
     // When refresh_hz runs below it the launch was deliberately clamped, and
     // resume refresh re-applies are held to that ceiling (issue #367).
     int requested_refresh_hz = 0;
+    // Whether this session is going to stream HDR. A private compositor must
+    // only be asked for an HDR output when the capture and encode path will
+    // actually treat it as one: a BT.2020/PQ output captured and encoded as
+    // SDR reaches the client as a washed-out image.
+    bool hdr_requested = false;
   };
 
   class stream_runtime_t {
@@ -79,7 +84,8 @@ namespace stream_runtime {
       bool force_windowed = false,
       bool allow_mangohud = true,
       const std::string &session_instance_id = "",
-      int requested_refresh_hz = 0
+      int requested_refresh_hz = 0,
+      bool hdr_requested = false
     );
     bool is_running();
     bool is_healthy();

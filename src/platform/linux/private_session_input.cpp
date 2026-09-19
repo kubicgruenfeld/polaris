@@ -165,7 +165,7 @@ namespace platf::private_session_input {
     return block.str();
   }
 
-  std::string build_rc_xml(const std::vector<input_device_t> &devices) {
+  std::string build_rc_xml(const std::vector<input_device_t> &devices, bool hdr_requested) {
     std::ostringstream rc;
     rc << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
        << generated_marker << "\n"
@@ -174,14 +174,18 @@ namespace platf::private_session_input {
        << "     session. -->\n"
        << "<labwc_config>\n"
        << "  <core>\n"
-       << "    <xwaylandPersistence>yes</xwaylandPersistence>\n"
-       // Only takes effect where the output actually reports HDR-capable
-       // wlr_output.supported_primaries/supported_transfer_functions and the
-       // Vulkan renderer is in use (see the generated environment file below);
-       // otherwise labwc's own output_supports_hdr() check no-ops this back
-       // to 8-bit, so requesting it unconditionally here is safe.
-       << "    <hdr>yes</hdr>\n"
-       << "  </core>\n"
+       << "    <xwaylandPersistence>yes</xwaylandPersistence>\n";
+
+    // Only ask for HDR when the session will actually stream it. labwc drives
+    // the output as BT.2020/PQ once this is set, and a PQ output that the
+    // capture and encode path still treats as Rec.709 SDR reaches the client
+    // as a washed-out image. So this follows the client's request rather than
+    // being on for every session.
+    if (hdr_requested) {
+      rc << "    <hdr>yes</hdr>\n";
+    }
+
+    rc << "  </core>\n"
        << "  <focus>\n"
        << "    <followMouse>no</followMouse>\n"
        << "    <raiseOnFocus>no</raiseOnFocus>\n"
@@ -215,12 +219,13 @@ namespace platf::private_session_input {
   bool ensure_generated_rc_xml(
     const fs::path &config_dir,
     const std::vector<input_device_t> &devices,
+    bool hdr_requested,
     std::string &status_out
   ) {
     const auto rc_path = config_dir / "rc.xml";
     const auto rc_display_path = private_config_display_path(rc_path);
 
-    const auto contents = build_rc_xml(devices);
+    const auto contents = build_rc_xml(devices, hdr_requested);
 
     std::error_code ec;
     if (fs::exists(rc_path, ec)) {
@@ -274,7 +279,8 @@ namespace platf::private_session_input {
     const auto ignored = std::count_if(devices.begin(), devices.end(), [](const auto &device) {
       return !is_polaris_virtual_device(device.name);
     });
-    status_out = "generated " + rc_display_path + " ignoring " + std::to_string(ignored) + " host input device(s)";
+    status_out = "generated " + rc_display_path + " ignoring " + std::to_string(ignored) +
+                 " host input device(s), hdr=" + (hdr_requested ? "yes" : "no");
     return true;
   }
 

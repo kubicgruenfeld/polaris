@@ -58,6 +58,43 @@ namespace wl {
     }
   };
 
+  /**
+   * @brief HDR10 mastering metadata for the private compositor's virtual output.
+   *
+   * A headless wlroots output has no EDID to read, and the Moonlight protocol
+   * carries no display characteristics in the client's direction — SS_HDR_METADATA
+   * only ever travels host to client, and the client tells the host no more than
+   * whether it owns an HDR10 display. So these are values Polaris asserts, not
+   * values it discovers.
+   *
+   * video.cpp refuses to enable HDR unless both the primaries and the mastering
+   * luminance below are present, so they cannot simply be left zeroed.
+   *
+   * These describe BT.2020 / SMPTE ST 2084 (PQ) at a 1000 nit peak, which is what
+   * labwc drives the virtual output as. Edit this block to match a specific panel.
+   */
+  constexpr SS_HDR_METADATA private_output_hdr_metadata {
+    // RGB order, CIE 1931 xy normalized to 50,000 — BT.2020 primaries.
+    .displayPrimaries = {
+      {35400, 14600},  // red   0.708, 0.292
+      {8500, 39850},  // green 0.170, 0.797
+      {6550, 2300},  // blue  0.131, 0.046
+    },
+    .whitePoint = {15635, 16450},  // D65 0.3127, 0.3290
+    .maxDisplayLuminance = 1000,  // nits
+    .minDisplayLuminance = 1,  // 1/10000th nit, i.e. 0.0001 nits
+    .maxContentLightLevel = 1000,  // nits
+    .maxFrameAverageLightLevel = 400,  // nits
+    .maxFullFrameLuminance = 400,  // nits
+  };
+
+  /// Map a captured DRM fourcc onto the frame format Polaris reports for it.
+  platf::frame_format_e frame_format_from_fourcc(std::uint32_t fourcc) {
+    return wl::extcopy_t::format_is_10bit(fourcc) ?
+             platf::frame_format_e::rgb10 :
+             platf::frame_format_e::bgra8;
+  }
+
   class wlr_t: public platf::display_t {
   public:
     std::string encoder_probe_route() const override {
@@ -753,7 +790,7 @@ namespace wl {
       img->frame_metadata = {
         .transport = platf::frame_transport_e::dmabuf,
         .residency = platf::frame_residency_e::gpu,
-        .format = platf::frame_format_e::bgra8,
+        .format = frame_format_from_fourcc(current_frame->sd.fourcc),
         .device = extcopy.capture_render_node(),
       };
       stream_stats::update_capture_metadata(img->frame_metadata);
@@ -836,6 +873,9 @@ namespace wl {
 
       BOOST_LOG(info) << "wlr: Attempting headless GPU-native DMA-BUF capture via ext-image-copy-capture"sv;
       blend_cursor = false;
+      // Only an HDR stream asks for 10-bit. An SDR stream keeps negotiating the
+      // 8-bit formats it always has, so nothing about it changes.
+      extcopy.prefer_10bit = config.dynamicRange > 0;
       if (extcopy.init(display, interface.copy_capture_manager, interface.output_capture_source_manager, interface.dmabuf_interface, output, blend_cursor)) {
         BOOST_LOG(info) << "wlr: ext-image-copy-capture DMA-BUF initialization failed on this headless runtime"sv;
         return -1;
@@ -844,6 +884,30 @@ namespace wl {
       capture_ready = true;
       prefetched_frame_pending = true;
       return 0;
+    }
+
+    /**
+     * @brief Whether the frames being captured actually carry HDR.
+     *
+     * Tied to the format negotiated with the compositor rather than to what the
+     * client asked for: labwc only drives the virtual output as BT.2020/PQ once
+     * it has a 10-bit render format, so a capture that came back 8-bit is an SDR
+     * capture no matter what was requested. Reporting otherwise would relabel an
+     * SDR stream as HDR.
+     */
+    bool is_hdr() override {
+      const auto fourcc = extcopy.capture_fourcc();
+      return fourcc && wl::extcopy_t::format_is_10bit(*fourcc);
+    }
+
+    bool get_hdr_metadata(SS_HDR_METADATA &metadata) override {
+      if (!is_hdr()) {
+        std::memset(&metadata, 0, sizeof(metadata));
+        return false;
+      }
+
+      metadata = private_output_hdr_metadata;
+      return true;
     }
 
     wl::extcopy_t extcopy;

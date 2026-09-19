@@ -8804,6 +8804,7 @@ namespace proc {
         .allow_mangohud = allow_cage_mangohud,
         .session_instance_id = _session_instance_id,
         .requested_refresh_hz = launch_session->requested_fps,
+        .hdr_requested = launch_session->enable_hdr,
       };
       if (!private_runtime->start(start_params)) {
         return false;
