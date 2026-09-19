@@ -62,6 +62,10 @@ in
       ../../patches/gamescope/03-pipewire-prefer-dmabuf.patch
       # ValveSoftware/gamescope#2217: headless prefers discrete GPU if unpinned.
       ../../patches/gamescope/06-prefer-discrete-gpu-2217.patch
+      # Accept a wlroots compositor's colour management so a nested gamescope
+      # can offer HDR to the game it hosts. DROP when gamescope stops demanding
+      # features its HDR10 path never uses.
+      ../../patches/gamescope/13-accept-wlroots-color-management.patch
     ];
 
   # Master dropped glm_include_dir / stb_include_dir meson options.

@@ -1,0 +1,66 @@
+--- a/src/Backends/WaylandBackend.cpp
++++ b/src/Backends/WaylandBackend.cpp
+@@ -706,6 +706,13 @@
+         wp_presentation *GetPresentation() const { return m_pPresentation; }
+         frog_color_management_factory_v1 *GetFrogColorManagementFactory() const { return m_pFrogColorMgmtFactory; }
+         wp_color_manager_v1 *GetWPColorManager() const { return m_pWPColorManager; }
++        // Polaris: which wp_color_manager_v1 features the compositor actually
++        // advertises, so a request it does not implement is never sent. An
++        // unsupported request is a protocol error, which kills gamescope.
++        bool SupportsWPColorFeature( wp_color_manager_v1_feature eFeature ) const
++        {
++            return Algorithm::Contains( m_WPColorManagerFeatures.eFeatures, eFeature );
++        }
+         wp_image_description_v1 *GetWPImageDescription( GamescopeAppTextureColorspace eColorspace ) const { return m_pWPImageDescriptions[ (uint32_t)eColorspace ]; }
+         wp_fractional_scale_manager_v1 *GetFractionalScaleManager() const { return m_pFractionalScaleManager; }
+         xdg_toplevel_icon_manager_v1 *GetToplevelIconManager() const { return m_pToplevelIconManager; }
+@@ -1487,8 +1494,13 @@
+                     {
+                         wp_image_description_creator_params_v1 *pParams = wp_color_manager_v1_create_parametric_creator( m_pBackend->GetWPColorManager() );
+ 
+-                        if ( close_enough( flScale, 1.0f ) )
++                        if ( close_enough( flScale, 1.0f ) ||
++                             !m_pBackend->SupportsWPColorFeature( WP_COLOR_MANAGER_V1_FEATURE_SET_PRIMARIES ) )
+                         {
++                            // Polaris: gamut expansion needs the explicit
++                            // set_primaries request. Without it, stay on the
++                            // named primaries rather than committing a protocol
++                            // error that would take gamescope down.
+                             wp_image_description_creator_params_v1_set_primaries_named( pParams, WP_COLOR_MANAGER_V1_PRIMARIES_BT2020 );
+                         }
+                         else
+@@ -2019,16 +2031,18 @@
+                 // Features
+                 if ( !Algorithm::Contains( m_WPColorManagerFeatures.eFeatures, WP_COLOR_MANAGER_V1_FEATURE_PARAMETRIC ) )
+                     return false;
+-                if ( !Algorithm::Contains( m_WPColorManagerFeatures.eFeatures, WP_COLOR_MANAGER_V1_FEATURE_SET_PRIMARIES ) )
+-                    return false;
+                 if ( !Algorithm::Contains( m_WPColorManagerFeatures.eFeatures, WP_COLOR_MANAGER_V1_FEATURE_SET_MASTERING_DISPLAY_PRIMARIES ) )
+                     return false;
+-                if ( !Algorithm::Contains( m_WPColorManagerFeatures.eFeatures, WP_COLOR_MANAGER_V1_FEATURE_EXTENDED_TARGET_VOLUME ) )
+-                    return false;
+-                if ( !Algorithm::Contains( m_WPColorManagerFeatures.eFeatures, WP_COLOR_MANAGER_V1_FEATURE_SET_LUMINANCES ) )
+-                    return false;
+-                if ( !Algorithm::Contains( m_WPColorManagerFeatures.eFeatures, WP_COLOR_MANAGER_V1_FEATURE_WINDOWS_SCRGB ) )
+-                    return false;
++                /*
++                 * Polaris: SET_PRIMARIES, SET_LUMINANCES, EXTENDED_TARGET_VOLUME
++                 * and WINDOWS_SCRGB were required here but are not used by the
++                 * HDR10 path, which builds its image description from
++                 * set_primaries_named + set_tf_named. Demanding them refuses HDR
++                 * against a compositor that implements everything HDR10 needs —
++                 * wlroots asserts a compositor cannot even advertise them, so
++                 * labwc could never satisfy this gate. The two call sites that
++                 * did need them are now guarded individually.
++                 */
+ 
+                 // Transfer Functions
+                 if ( !Algorithm::Contains( m_WPColorManagerFeatures.eTransferFunctions, WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_ST2084_PQ ) )
+@@ -2054,6 +2068,7 @@
+                 }
+ 
+                 // scRGB
++                if ( Algorithm::Contains( m_WPColorManagerFeatures.eFeatures, WP_COLOR_MANAGER_V1_FEATURE_WINDOWS_SCRGB ) )
+                 {
+                     m_pWPImageDescriptions[ GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB ] = wp_color_manager_v1_create_windows_scrgb( m_pWPColorManager );
+                 }
