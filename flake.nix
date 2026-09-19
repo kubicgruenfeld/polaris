@@ -51,6 +51,15 @@
         gamescope-polaris = final.callPackage ./nix/packages/gamescope-polaris { };
         gamescope-hdr = final.gamescope-polaris; # back-compat alias
         xdg-desktop-portal-gamescope = final.callPackage ./nix/packages/xdg-desktop-portal-gamescope { };
+        # `labwc = prev.labwc`, not `final.labwc`: callPackage would otherwise
+        # resolve labwc-polaris-hdr's own `{ labwc }` argument back to the
+        # overridden `final.labwc` below and recurse forever.
+        labwc-polaris-hdr = final.callPackage ./nix/packages/labwc-polaris-hdr { labwc = prev.labwc; };
+        # Replaces plain `labwc` so a NixOS config that already does
+        # `environment.systemPackages = [ pkgs.labwc ]` (see docs/launch-modes.md,
+        # docs/stream-paths.md — labwc isn't vendored/packaged by Polaris itself)
+        # gets the headless HDR capability patch without changing any reference.
+        labwc = final.labwc-polaris-hdr;
         polaris-stream = final.callPackage ./nix/packages/polaris-stream {
           polarisSrc = polarisSrc;
           cudaSupport = true;
@@ -67,6 +76,7 @@
             gamescope-polaris
             gamescope-hdr
             xdg-desktop-portal-gamescope
+            labwc-polaris-hdr
             polaris-stream
             ;
           default = pkgs.polaris-stream;

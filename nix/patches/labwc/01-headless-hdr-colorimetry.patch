@@ -1,0 +1,46 @@
+--- a/src/output.c
++++ b/src/output.c
+@@ -11,10 +11,12 @@
+ #include <assert.h>
+ #include <drm_fourcc.h>
+ #include <glib.h>
+ #include <strings.h>
++#include <wlr/backend/headless.h>
+ #include <wlr/backend/wayland.h>
+ #include <wlr/config.h>
++#include <wlr/render/color.h>
+ #include <wlr/types/wlr_cursor.h>
+ #include <wlr/types/wlr_ext_workspace_v1.h>
+ #include <wlr/types/wlr_gamma_control_v1.h>
+ #include <wlr/types/wlr_output.h>
+@@ -609,14 +609,27 @@ handle_new_output(struct wl_listener *listener, void *data)
+ 	if (wlr_output_is_wl(wlr_output)) {
+ 		GString *title = g_string_new(server.title_fmt);
+ 		g_string_replace(title, "%o", wlr_output->name, 0);
+ 		wlr_wl_output_set_title(wlr_output, title->str);
+ 		g_string_free(title, TRUE);
+ 		wlr_wl_output_set_app_id(wlr_output, "labwc");
+ 	}
+
++	/*
++	 * Polaris: the headless backend has no EDID to read, so upstream
++	 * never populates wlr_output's HDR capability bitfields for it (see
++	 * backend/headless/output.c, which calloc()s the output and leaves
++	 * supported_primaries/supported_transfer_functions at zero). Set
++	 * them here so the color-management-v1 / <Hdr.core> path that
++	 * already works for real DRM outputs also activates for a headless
++	 * one, driving a virtual output whose known-fixed characteristics
++	 * Polaris supplies out of band.
++	 */
++	if (wlr_output_is_headless(wlr_output)) {
++		wlr_output->supported_primaries |= WLR_COLOR_NAMED_PRIMARIES_BT2020;
++		wlr_output->supported_transfer_functions |=
++			WLR_COLOR_TRANSFER_FUNCTION_ST2084_PQ;
++	}
++
+ 	/*
+ 	 * We offer any display as available for lease, some apps like
+ 	 * gamescope want to take ownership of a display when they can
+ 	 * to use planes and present directly.
+ 	 * This is also useful for debugging the DRM parts of
+ 	 * another compositor.
