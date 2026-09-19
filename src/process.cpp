@@ -8804,8 +8804,18 @@ namespace proc {
         .allow_mangohud = allow_cage_mangohud,
         .session_instance_id = _session_instance_id,
         .requested_refresh_hz = launch_session->requested_fps,
-        .hdr_requested = launch_session->enable_hdr,
+        // The client's own request, not enable_hdr: the latter carries a
+        // resolved paired-profile preference and can be true for a session
+        // whose stream then negotiates SDR, which would drive the compositor
+        // to PQ for an SDR stream and wash the image out.
+        .hdr_requested = launch_session->client_requested_hdr,
       };
+      if (launch_session->client_requested_hdr != launch_session->enable_hdr) {
+        BOOST_LOG(info) << "private compositor HDR follows the client request ("sv
+                        << (launch_session->client_requested_hdr ? "on"sv : "off"sv)
+                        << ") rather than the resolved preference ("sv
+                        << (launch_session->enable_hdr ? "on"sv : "off"sv) << ')';
+      }
       if (!private_runtime->start(start_params)) {
         return false;
       }

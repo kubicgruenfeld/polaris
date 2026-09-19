@@ -157,6 +157,18 @@ namespace rtsp_stream {
     int surround_info;
     std::string surround_params;
     bool enable_hdr;
+    /**
+     * What the client itself asked for in this launch, before any paired
+     * client profile or preset resolution rewrites enable_hdr.
+     *
+     * enable_hdr ends up carrying a resolved *preference*, so it can be true
+     * for a session whose video stream then negotiates SDR. Anything that has
+     * to match the stream's actual dynamic range — notably whether the private
+     * compositor drives its output as BT.2020/PQ — has to follow the client's
+     * own request instead, or it renders HDR for an SDR stream and the client
+     * receives a washed-out image.
+     */
+    bool client_requested_hdr = false;
     bool enable_sops;
     bool virtual_display;
     bool mirror_desktop = false;

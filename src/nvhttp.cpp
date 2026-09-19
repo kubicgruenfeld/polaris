@@ -4774,8 +4774,10 @@ namespace nvhttp {
       const auto raw_hdr = get_arg(args, "resolvedHdr", "");
       if (raw_hdr == "1") {
         launch_session->enable_hdr = true;
+        launch_session->client_requested_hdr = true;
       } else if (raw_hdr == "0") {
         launch_session->enable_hdr = false;
+        launch_session->client_requested_hdr = false;
       } else {
         BOOST_LOG(warning) << "Rejecting resolved launch profile with missing or malformed HDR value"sv;
         return nullptr;
@@ -4802,6 +4804,7 @@ namespace nvhttp {
       }
     } else {
       launch_session->enable_hdr = util::from_view(get_arg(args, "hdrMode", "0"));
+      launch_session->client_requested_hdr = launch_session->enable_hdr;
     }
     launch_session->watch_only = watch_requested(args);
     launch_session->perm = launch_session->watch_only ? PERM::view : named_cert_p->perm;
