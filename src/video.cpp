@@ -5416,19 +5416,48 @@ namespace video {
     reset_encoder_probe_state_unlocked(false);
     encoder_selection_info = selection_plan;
 
+    // The portal capture does not connect to its PipeWire source while probing;
+    // it encodes a dummy image instead ("portal: Probe mode — using dummy").
+    // With no stream there is no DMA-BUF, so make_avcodec_encode_device falls
+    // back to the SHM->CUDA converter, which only accepts NV12. Main10 then
+    // fails on the capture device, before the encoder is ever asked, and the
+    // failure says nothing about the live path: that one negotiates a 10-bit
+    // DMA-BUF (xBGR_210LE from gamescope in HDR mode) and feeds P010 through
+    // cuda_dmabuf_t. Zeroing the mode here drops the Main10 bits from
+    // ServerCodecModeSupport, so clients refuse to start an HDR stream at all
+    // and the host never gets the chance to prove itself.
+    const bool main10_probe_is_authoritative = [] {
+#ifdef __linux__
+      return !(config::video.capture == "portal" &&
+               config::video.linux_display.stream_mode == "gamescope_stream");
+#else
+      return true;
+#endif
+    }();
+
     auto adjust_encoder_constraints = [&](encoder_t *encoder) {
       // If we can't satisfy both the encoder and codec requirement, prefer the encoder over codec support
       if (active_hevc_mode == 3 && !encoder->hevc[encoder_t::DYNAMIC_RANGE]) {
-        BOOST_LOG(warning) << "Encoder ["sv << encoder->name << "] does not support HEVC Main10 on this system"sv;
-        active_hevc_mode = 0;
+        if (main10_probe_is_authoritative) {
+          BOOST_LOG(warning) << "Encoder ["sv << encoder->name << "] does not support HEVC Main10 on this system"sv;
+          active_hevc_mode = 0;
+        } else {
+          BOOST_LOG(info) << "Encoder ["sv << encoder->name
+                          << "] failed the HEVC Main10 probe against the portal's dummy source; keeping the configured mode because that probe cannot reach the live 10-bit DMA-BUF path"sv;
+        }
       } else if (active_hevc_mode == 2 && !encoder->hevc[encoder_t::PASSED]) {
         BOOST_LOG(warning) << "Encoder ["sv << encoder->name << "] does not support HEVC on this system"sv;
         active_hevc_mode = 0;
       }
 
       if (active_av1_mode == 3 && !encoder->av1[encoder_t::DYNAMIC_RANGE]) {
-        BOOST_LOG(warning) << "Encoder ["sv << encoder->name << "] does not support AV1 Main10 on this system"sv;
-        active_av1_mode = 0;
+        if (main10_probe_is_authoritative) {
+          BOOST_LOG(warning) << "Encoder ["sv << encoder->name << "] does not support AV1 Main10 on this system"sv;
+          active_av1_mode = 0;
+        } else {
+          BOOST_LOG(info) << "Encoder ["sv << encoder->name
+                          << "] failed the AV1 Main10 probe against the portal's dummy source; keeping the configured mode because that probe cannot reach the live 10-bit DMA-BUF path"sv;
+        }
       } else if (active_av1_mode == 2 && !encoder->av1[encoder_t::PASSED]) {
         BOOST_LOG(warning) << "Encoder ["sv << encoder->name << "] does not support AV1 on this system"sv;
         active_av1_mode = 0;
