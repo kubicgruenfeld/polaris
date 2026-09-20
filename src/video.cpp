@@ -5444,6 +5444,12 @@ namespace video {
         } else {
           BOOST_LOG(info) << "Encoder ["sv << encoder->name
                           << "] failed the HEVC Main10 probe against the portal's dummy source; keeping the configured mode because that probe cannot reach the live 10-bit DMA-BUF path"sv;
+          // make_encode_session() gates the live stream on this same flag, so
+          // clearing the mode alone would still refuse HDR at launch with
+          // "dynamic range not supported". The probe could not judge it either
+          // way; let the live path try and fail loudly if the capture really
+          // cannot deliver 10 bits.
+          encoder->hevc[encoder_t::DYNAMIC_RANGE] = 1;
         }
       } else if (active_hevc_mode == 2 && !encoder->hevc[encoder_t::PASSED]) {
         BOOST_LOG(warning) << "Encoder ["sv << encoder->name << "] does not support HEVC on this system"sv;
@@ -5457,6 +5463,7 @@ namespace video {
         } else {
           BOOST_LOG(info) << "Encoder ["sv << encoder->name
                           << "] failed the AV1 Main10 probe against the portal's dummy source; keeping the configured mode because that probe cannot reach the live 10-bit DMA-BUF path"sv;
+          encoder->av1[encoder_t::DYNAMIC_RANGE] = 1;
         }
       } else if (active_av1_mode == 2 && !encoder->av1[encoder_t::PASSED]) {
         BOOST_LOG(warning) << "Encoder ["sv << encoder->name << "] does not support AV1 on this system"sv;
