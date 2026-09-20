@@ -1,6 +1,6 @@
 --- a/src/Backends/WaylandBackend.cpp
 +++ b/src/Backends/WaylandBackend.cpp
-@@ -706,6 +706,13 @@
+@@ -706,6 +706,17 @@
          wp_presentation *GetPresentation() const { return m_pPresentation; }
          frog_color_management_factory_v1 *GetFrogColorManagementFactory() const { return m_pFrogColorMgmtFactory; }
          wp_color_manager_v1 *GetWPColorManager() const { return m_pWPColorManager; }
@@ -11,10 +11,41 @@
 +        {
 +            return Algorithm::Contains( m_WPColorManagerFeatures.eFeatures, eFeature );
 +        }
++        bool SupportsWPColorTFNamed( wp_color_manager_v1_transfer_function eTF ) const
++        {
++            return Algorithm::Contains( m_WPColorManagerFeatures.eTransferFunctions, eTF );
++        }
          wp_image_description_v1 *GetWPImageDescription( GamescopeAppTextureColorspace eColorspace ) const { return m_pWPImageDescriptions[ (uint32_t)eColorspace ]; }
          wp_fractional_scale_manager_v1 *GetFractionalScaleManager() const { return m_pFractionalScaleManager; }
          xdg_toplevel_icon_manager_v1 *GetToplevelIconManager() const { return m_pToplevelIconManager; }
-@@ -1487,8 +1494,13 @@
+@@ -1481,14 +1492,39 @@
+ 
+                     if ( oState->eColorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB )
+                     {
+-                        m_pCurrentImageDescription = wp_color_manager_v1_create_windows_scrgb( m_pBackend->GetWPColorManager() );
++                        if ( m_pBackend->SupportsWPColorFeature( WP_COLOR_MANAGER_V1_FEATURE_WINDOWS_SCRGB ) )
++                        {
++                            m_pCurrentImageDescription = wp_color_manager_v1_create_windows_scrgb( m_pBackend->GetWPColorManager() );
++                        }
++                        else if ( m_pBackend->SupportsWPColorTFNamed( WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_EXT_LINEAR ) )
++                        {
++                            // Polaris: create_windows_scrgb is only a shorthand, and a
++                            // compositor that does not advertise the feature answers it
++                            // with a protocol error that kills the connection — wlroots
++                            // posts unsupported_feature unconditionally. Steam's Big
++                            // Picture UI hands us scRGB as soon as HDR is on, so spell
++                            // scRGB out instead: sRGB primaries with an extended-range
++                            // linear transfer function, whose default reference white of
++                            // 80 nits is exactly scRGB's.
++                            wp_image_description_creator_params_v1 *pParams = wp_color_manager_v1_create_parametric_creator( m_pBackend->GetWPColorManager() );
++                            wp_image_description_creator_params_v1_set_primaries_named( pParams, WP_COLOR_MANAGER_V1_PRIMARIES_SRGB );
++                            wp_image_description_creator_params_v1_set_tf_named( pParams, WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_EXT_LINEAR );
++                            m_pCurrentImageDescription = wp_image_description_creator_params_v1_create( pParams );
++                        }
++                        // Otherwise leave it null: the unset_image_description below
++                        // keeps the surface untagged, which is wrong but survivable.
+                     }
+                     else if ( oState->eColorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ )
                      {
                          wp_image_description_creator_params_v1 *pParams = wp_color_manager_v1_create_parametric_creator( m_pBackend->GetWPColorManager() );
  
@@ -29,7 +60,58 @@
                              wp_image_description_creator_params_v1_set_primaries_named( pParams, WP_COLOR_MANAGER_V1_PRIMARIES_BT2020 );
                          }
                          else
-@@ -2019,16 +2031,18 @@
+@@ -1519,15 +1555,43 @@
+                                 (((int32_t)pInfoframe->white_point.x) * 1'000'000) / 0xC350,
+                                 (((int32_t)pInfoframe->white_point.y) * 1'000'000) / 0xC350);
+ 
+-                            wp_image_description_creator_params_v1_set_mastering_luminance( pParams,
+-                                pInfoframe->min_display_mastering_luminance,
+-                                pInfoframe->max_display_mastering_luminance );
++                            // Polaris: a compositor validates these and answers anything
++                            // inconsistent with a protocol error, which takes down the
++                            // whole connection rather than the frame. The numbers come
++                            // from the game's own HDR metadata and are free to be
++                            // nonsense, so only forward what will pass. wlroots scales
++                            // min by 1/10000 before comparing, so compare the same way.
++                            const float flMasteringMin = pInfoframe->min_display_mastering_luminance / 10000.0f;
++                            const float flMasteringMax = float( pInfoframe->max_display_mastering_luminance );
++                            const bool bMasteringLuminance = flMasteringMax > flMasteringMin;
++
++                            if ( bMasteringLuminance )
++                            {
++                                wp_image_description_creator_params_v1_set_mastering_luminance( pParams,
++                                    pInfoframe->min_display_mastering_luminance,
++                                    pInfoframe->max_display_mastering_luminance );
++                            }
++
++                            // Content light levels have to sit inside that range, and
++                            // max_fall has to stay under max_cll.
++                            auto InMasteringRange = [ & ]( uint32_t uValue )
++                            {
++                                if ( !bMasteringLuminance )
++                                    return true;
++                                return float( uValue ) > flMasteringMin && float( uValue ) <= flMasteringMax;
++                            };
++
++                            const uint32_t uMaxCLL = pInfoframe->max_cll;
++                            const uint32_t uMaxFALL = pInfoframe->max_fall;
++                            const bool bSendMaxCLL = uMaxCLL != 0 && InMasteringRange( uMaxCLL );
++                            const bool bSendMaxFALL = uMaxFALL != 0 && InMasteringRange( uMaxFALL ) &&
++                                ( !bSendMaxCLL || uMaxFALL <= uMaxCLL );
+ 
+-                            wp_image_description_creator_params_v1_set_max_cll( pParams,
+-                                pInfoframe->max_cll );
++                            if ( bSendMaxCLL )
++                                wp_image_description_creator_params_v1_set_max_cll( pParams, uMaxCLL );
+ 
+-                            wp_image_description_creator_params_v1_set_max_fall( pParams,
+-                                pInfoframe->max_fall );
++                            if ( bSendMaxFALL )
++                                wp_image_description_creator_params_v1_set_max_fall( pParams, uMaxFALL );
+                         }
+                         m_pCurrentImageDescription = wp_image_description_creator_params_v1_create( pParams );
+                     }
+@@ -2019,16 +2083,18 @@
                  // Features
                  if ( !Algorithm::Contains( m_WPColorManagerFeatures.eFeatures, WP_COLOR_MANAGER_V1_FEATURE_PARAMETRIC ) )
                      return false;
@@ -56,7 +138,7 @@
  
                  // Transfer Functions
                  if ( !Algorithm::Contains( m_WPColorManagerFeatures.eTransferFunctions, WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_ST2084_PQ ) )
-@@ -2054,6 +2068,7 @@
+@@ -2054,6 +2120,7 @@
                  }
  
                  // scRGB
