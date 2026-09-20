@@ -540,6 +540,7 @@ namespace confighttp::validation {
       "exclude-global-state-cmd"sv,
       "launching"sv,
       "per-client-app-identity"sv,
+      "raw-command"sv,
       "terminate-on-pause"sv,
       "use-app-identity"sv,
       "close-desktop-steam-for-private"sv,

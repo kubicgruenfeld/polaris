@@ -604,6 +604,17 @@ namespace proc {
     bool per_client_app_identity = false;
     bool allow_client_commands = false;
     bool terminate_on_pause = false;
+    /**
+     * Launch this app exactly as configured.
+     *
+     * Polaris canonicalises anything it recognises as a Steam launch, which
+     * rewrites Big Picture and Steam library commands into its own form. That
+     * is right for entries Polaris manages, but it silently discards a wrapper
+     * the user put there deliberately — a nested gamescope, a profiler, an env
+     * shim — leaving no way to express one short of hiding it behind a script.
+     * With this set, the configured commands are used verbatim.
+     */
+    bool raw_command = false;
     int  scale_factor = 0;
     std::chrono::seconds exit_timeout {};
   };

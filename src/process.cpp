@@ -11369,7 +11369,8 @@ namespace proc {
         {"close-desktop-steam-for-private", false},
         {"virtual-display", false},
         {"virtual-display-primary", false},
-        {"terminate-on-pause", false}
+        {"terminate-on-pause", false},
+        {"raw-command", false}
       };
 
       // Keys to convert to integers along with the parser defaults for invalid legacy values.
@@ -11438,6 +11439,14 @@ namespace proc {
     for (auto &app : fileTree["apps"]) {
       const auto app_name = json_string_member_or(app, "name");
       if (is_steam_big_picture_name(app_name)) {
+        continue;
+      }
+
+      // An app asking to launch as configured is left alone here too. This
+      // migration rewrites apps.json on disk, so without this the user's own
+      // command would be replaced permanently rather than just at launch.
+      if (app.contains("raw-command") && app["raw-command"].is_boolean() &&
+          app["raw-command"].get<bool>()) {
         continue;
       }
 
@@ -12143,6 +12152,7 @@ namespace proc {
           ctx.per_client_app_identity = app_node.value("per-client-app-identity", false);
           ctx.allow_client_commands = app_node.value("allow-client-commands", true);
           ctx.terminate_on_pause = app_node.value("terminate-on-pause", false);
+          ctx.raw_command = app_node.value("raw-command", false);
           ctx.gamepad = app_node.value("gamepad", "");
           ctx.steam_appid = app_node.value("steam-appid", "");
           ctx.steam_launch_mode = proc::normalize_steam_launch_mode(app_node.value("steam-launch-mode", "direct"));
@@ -12179,8 +12189,18 @@ namespace proc {
           ctx.prep_cmds = std::move(prep_cmds);
           ctx.state_cmds = std::move(state_cmds);
           ctx.detached = std::move(detached);
-          normalize_steam_big_picture_app(ctx);
-          normalize_steam_library_app(ctx);
+          if (ctx.raw_command) {
+            // The user asked for this app to launch exactly as written, so the
+            // Steam canonicalisation below is skipped. It would otherwise strip
+            // any wrapper around the Steam command — a nested gamescope, for
+            // instance — leaving the entry looking configured but not behaving
+            // that way.
+            BOOST_LOG(info) << "process: ["sv << ctx.name
+                            << "] raw-command is set; launching it as configured"sv;
+          } else {
+            normalize_steam_big_picture_app(ctx);
+            normalize_steam_library_app(ctx);
+          }
 
           apps.emplace_back(std::move(ctx));
         }
