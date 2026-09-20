@@ -152,7 +152,11 @@ namespace platf::keyboard {
     if (raw->wayland_input.keyboard_update(modcode, release)) {
       return;
     }
-    if (raw->wayland_input.should_block_host_fallback()) {
+    if (raw->ei_input.keyboard_update(modcode, release)) {
+      return;
+    }
+    if (raw->wayland_input.should_block_host_fallback() ||
+        raw->ei_input.should_block_host_fallback()) {
       return;
     }
 

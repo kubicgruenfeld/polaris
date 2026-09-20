@@ -425,6 +425,22 @@ if(WAYLAND_FOUND)
         message(STATUS "xkbcommon not found; labwc-local virtual input disabled")
     endif()
 
+    # gamescope_stream has no labwc socket to inject into, and a headless
+    # gamescope has no libinput seat to read host uinput with. gamescope does
+    # run an EIS server for emulated input, which is the same path its XWayland
+    # XTEST support takes.
+    if(PkgConfig_FOUND)
+        pkg_check_modules(LIBEI libei-1.0)
+    endif()
+    if(LIBEI_FOUND)
+        add_compile_definitions(POLARIS_BUILD_EI_VIRTUAL_INPUT)
+        include_directories(SYSTEM ${LIBEI_INCLUDE_DIRS})
+        link_directories(${LIBEI_LIBRARY_DIRS})
+        list(APPEND PLATFORM_LIBRARIES ${LIBEI_LIBRARIES})
+    else()
+        message(STATUS "libei not found; gamescope-local virtual input disabled")
+    endif()
+
     include_directories(
             SYSTEM
             ${WAYLAND_INCLUDE_DIRS}
