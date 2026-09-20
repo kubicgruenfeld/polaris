@@ -18,17 +18,38 @@
          wp_image_description_v1 *GetWPImageDescription( GamescopeAppTextureColorspace eColorspace ) const { return m_pWPImageDescriptions[ (uint32_t)eColorspace ]; }
          wp_fractional_scale_manager_v1 *GetFractionalScaleManager() const { return m_pFractionalScaleManager; }
          xdg_toplevel_icon_manager_v1 *GetToplevelIconManager() const { return m_pToplevelIconManager; }
-@@ -1481,14 +1492,39 @@
+@@ -1473,6 +1484,18 @@
+                     m_ColorState = colorState;
+                     m_flPreviousSaturationScale = flScale;
+ 
++                    // Polaris: the colour space a layer arrives in decides which
++                    // requests we send the host, and an unsupported one costs the
++                    // whole connection. This only fires when the state changes, so
++                    // it stays quiet, and it says which route a session took.
++                    {
++                        static const char *s_pszColorspaces[] = { "LINEAR", "SRGB", "SCRGB", "HDR10_PQ", "PASSTHRU" };
++                        const uint32_t uColorspace = uint32_t( oState->eColorspace );
++                        xdg_log.infof( "colour state -> %s%s",
++                            uColorspace < GamescopeAppTextureColorspace_Count ? s_pszColorspaces[ uColorspace ] : "?",
++                            oState->pHDRMetadata ? " (with HDR metadata)" : "" );
++                    }
++
+                     if ( m_pCurrentImageDescription )
+                     {
+                         wp_image_description_v1_destroy( m_pCurrentImageDescription );
+@@ -1481,14 +1504,45 @@
  
                      if ( oState->eColorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB )
                      {
 -                        m_pCurrentImageDescription = wp_color_manager_v1_create_windows_scrgb( m_pBackend->GetWPColorManager() );
 +                        if ( m_pBackend->SupportsWPColorFeature( WP_COLOR_MANAGER_V1_FEATURE_WINDOWS_SCRGB ) )
 +                        {
++                            xdg_log.infof( "  scRGB: host advertises windows_scrgb; using it" );
 +                            m_pCurrentImageDescription = wp_color_manager_v1_create_windows_scrgb( m_pBackend->GetWPColorManager() );
 +                        }
 +                        else if ( m_pBackend->SupportsWPColorTFNamed( WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_EXT_LINEAR ) )
 +                        {
++                            xdg_log.infof( "  scRGB: no windows_scrgb on this host; describing it as sRGB primaries + ext-linear" );
 +                            // Polaris: create_windows_scrgb is only a shorthand, and a
 +                            // compositor that does not advertise the feature answers it
 +                            // with a protocol error that kills the connection — wlroots
@@ -42,8 +63,12 @@
 +                            wp_image_description_creator_params_v1_set_tf_named( pParams, WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_EXT_LINEAR );
 +                            m_pCurrentImageDescription = wp_image_description_creator_params_v1_create( pParams );
 +                        }
-+                        // Otherwise leave it null: the unset_image_description below
-+                        // keeps the surface untagged, which is wrong but survivable.
++                        else
++                        {
++                            xdg_log.errorf( "  scRGB: host offers neither windows_scrgb nor ext-linear; leaving the surface untagged" );
++                        }
++                        // A null description falls through to unset_image_description
++                        // below, which is wrong for the colours but survivable.
                      }
                      else if ( oState->eColorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ )
                      {
@@ -60,7 +85,7 @@
                              wp_image_description_creator_params_v1_set_primaries_named( pParams, WP_COLOR_MANAGER_V1_PRIMARIES_BT2020 );
                          }
                          else
-@@ -1519,15 +1555,43 @@
+@@ -1519,15 +1573,43 @@
                                  (((int32_t)pInfoframe->white_point.x) * 1'000'000) / 0xC350,
                                  (((int32_t)pInfoframe->white_point.y) * 1'000'000) / 0xC350);
  
@@ -111,7 +136,7 @@
                          }
                          m_pCurrentImageDescription = wp_image_description_creator_params_v1_create( pParams );
                      }
-@@ -2019,16 +2083,18 @@
+@@ -2019,16 +2101,18 @@
                  // Features
                  if ( !Algorithm::Contains( m_WPColorManagerFeatures.eFeatures, WP_COLOR_MANAGER_V1_FEATURE_PARAMETRIC ) )
                      return false;
@@ -138,7 +163,7 @@
  
                  // Transfer Functions
                  if ( !Algorithm::Contains( m_WPColorManagerFeatures.eTransferFunctions, WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_ST2084_PQ ) )
-@@ -2054,6 +2120,7 @@
+@@ -2054,6 +2138,7 @@
                  }
  
                  // scRGB
