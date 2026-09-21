@@ -97,6 +97,11 @@ namespace platf {
     /// before it is treated as dead. Bounds the window in which input is
     /// swallowed by a handshake that is never going to finish.
     constexpr auto k_handshake_deadline = 2s;
+
+    /// Wait before trying again after a handshake that stalled. Longer than
+    /// k_reconnect_interval: every attempt at a socket that answers and then
+    /// says nothing costs a reader thread and the whole deadline.
+    constexpr auto k_stalled_retry_interval = 10s;
   }  // namespace
 
   struct ei_virtual_input_t::impl_t {
@@ -107,6 +112,11 @@ namespace platf {
     std::uint32_t sequence = 0;
     bool logged_ready = false;
     bool logged_unavailable = false;
+    bool logged_stalled = false;
+    /// Whether this connection has offered a device at all. The handshake
+    /// deadline is about a connection that never does; a device that was
+    /// offered and later paused is the compositor's call, not a dead socket.
+    bool device_seen = false;
     /// Set when the EIS socket could not be reached, so input can fall back to
     /// host uinput instead of vanishing into a compositor that never started.
     bool connect_failed = false;
@@ -180,6 +190,7 @@ namespace platf {
         ctx = nullptr;
       }
       logged_ready = false;
+      device_seen = false;
       wake_pumper();
     }
 
@@ -231,10 +242,11 @@ namespace platf {
     /**
      * @brief Whether an event we cannot deliver should still be swallowed.
      *
-     * Only once the EIS socket has answered. A host configured for gamescope
-     * whose compositor never came up has nothing to receive the event, and
-     * claiming it there would leave that host with no input at all rather than
-     * falling back to uinput.
+     * Until a connection fails, and after a failure only once a device is
+     * emulating again. A host configured for gamescope whose compositor never
+     * came up, or whose socket answers and then offers nothing, has nothing to
+     * receive the event, and claiming it there would leave that host with no
+     * input at all rather than falling back to uinput.
      */
     bool owns_input() const {
       return gamescope_runtime_active() && !connect_failed;
@@ -280,11 +292,16 @@ namespace platf {
           case EI_EVENT_DEVICE_ADDED:
             release_device();
             device = ei_device_ref(ei_event_get_device(event));
+            device_seen = true;
             break;
           case EI_EVENT_DEVICE_RESUMED:
             if (device) {
               ei_device_start_emulating(device, ++sequence);
               emulating = true;
+              // Only now is the input ours again after a failure: see the
+              // note where ensure_ready() connects.
+              connect_failed = false;
+              logged_stalled = false;
               if (!logged_ready) {
                 BOOST_LOG(info) << "EI virtual input: routing mouse and keyboard to the gamescope session on ["sv
                                 << socket_name() << ']';
@@ -333,6 +350,15 @@ namespace platf {
         if (::poll(pfds, 2, -1) < 0 && errno != EINTR) {
           break;
         }
+        if (pfds[1].revents & POLLIN) {
+          // A wake only ever means "look at the state again", which the checks
+          // below do. The byte still has to go: left in the pipe it makes every
+          // later poll() return at once. disconnect_locked() writes one even
+          // when no reader is running to be joined and drained after, so the
+          // next connection's reader would otherwise spin on it, taking the
+          // mutex the input path needs on every pass.
+          drain_wake_pipe();
+        }
         if (pumper_stop) {
           break;
         }
@@ -374,11 +400,15 @@ namespace platf {
         // The socket answered but no device ever arrived. Let go of it rather
         // than keep swallowing input into a connection that is not going to
         // carry any; owns_input() then lets uinput have the events back.
-        if (now - connected_at > k_handshake_deadline) {
-          BOOST_LOG(warning) << "EI virtual input: gamescope accepted the connection but never offered a "sv
-                             << "device; mouse and keyboard will use host uinput"sv;
+        if (!device_seen && now - connected_at > k_handshake_deadline) {
+          if (!logged_stalled) {
+            BOOST_LOG(warning) << "EI virtual input: gamescope accepted the connection but never offered a "sv
+                               << "device; mouse and keyboard will use host uinput"sv;
+            logged_stalled = true;
+          }
           disconnect_locked();
           connect_failed = true;
+          next_connect_attempt = now + k_stalled_retry_interval;
         }
         return false;
       }
@@ -417,7 +447,11 @@ namespace platf {
         return false;
       }
       logged_unavailable = false;
-      connect_failed = false;
+      // connect_failed stays as it was. After a failure the events belong to
+      // host uinput until a device is emulating, and drain_locked() clears the
+      // flag there. Clearing it here handed a socket that answers and then
+      // stalls the input back on every retry: two seconds swallowed, one event
+      // through, two seconds swallowed, for as long as the socket stayed up.
       connected_at = now;
 
       drain_locked();
