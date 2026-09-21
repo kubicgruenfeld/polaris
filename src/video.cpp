@@ -5438,7 +5438,11 @@ namespace video {
     auto adjust_encoder_constraints = [&](encoder_t *encoder) {
       // If we can't satisfy both the encoder and codec requirement, prefer the encoder over codec support
       if (active_hevc_mode == 3 && !encoder->hevc[encoder_t::DYNAMIC_RANGE]) {
-        if (main10_probe_is_authoritative) {
+        // The dummy source is NV12, so an 8-bit failure is authoritative: an
+        // encoder that could not pass at all has nothing to say about 10-bit.
+        // Overriding there would advertise Main10 on a host with no HEVC and
+        // fail at stream start, where it falls back to H.264 cleanly today.
+        if (main10_probe_is_authoritative || !encoder->hevc[encoder_t::PASSED]) {
           BOOST_LOG(warning) << "Encoder ["sv << encoder->name << "] does not support HEVC Main10 on this system"sv;
           active_hevc_mode = 0;
         } else {
@@ -5457,7 +5461,7 @@ namespace video {
       }
 
       if (active_av1_mode == 3 && !encoder->av1[encoder_t::DYNAMIC_RANGE]) {
-        if (main10_probe_is_authoritative) {
+        if (main10_probe_is_authoritative || !encoder->av1[encoder_t::PASSED]) {
           BOOST_LOG(warning) << "Encoder ["sv << encoder->name << "] does not support AV1 Main10 on this system"sv;
           active_av1_mode = 0;
         } else {
