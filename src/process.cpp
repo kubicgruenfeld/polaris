@@ -8358,6 +8358,17 @@ namespace proc {
     _env["POLARIS_CLIENT_HOST_AUDIO"] = launch_session->host_audio ? "true" : "false";
     _env["POLARIS_CLIENT_ENABLE_SOPS"] = launch_session->enable_sops ? "true" : "false";
 
+    // Per-client SDR reference white. The nested gamescope reads this as
+    // --hdr-sdr-content-nits, so it only means anything for a session that
+    // renders SDR inside an HDR output. Left alone when the profile does not
+    // set it, so the host setting and its 203-nit default still stand.
+    if (client_profile && client_profile->sdr_nits.has_value()) {
+      _env["POLARIS_SDR_CONTENT_NITS"] = std::to_string(client_profile->sdr_nits.value());
+      BOOST_LOG(info) << "session_manager: client ["sv << launch_session->device_name
+                      << "] overrides SDR content brightness to "sv
+                      << client_profile->sdr_nits.value() << " nits"sv;
+    }
+
     int channelCount = launch_session->surround_info & 65535;
     switch (channelCount) {
       case 2:

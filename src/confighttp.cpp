@@ -5283,6 +5283,18 @@ namespace confighttp {
       if (body.contains("hdr") && !body["hdr"].is_null()) {
         profile.hdr = body["hdr"].get<bool>();
       }
+      if (body.contains("sdr_nits") && !body["sdr_nits"].is_null()) {
+        const auto nits = body["sdr_nits"].get<int>();
+        if (nits < client_profiles::k_min_sdr_nits || nits > client_profiles::k_max_sdr_nits) {
+          output_tree["status"] = false;
+          output_tree["error"] = "sdr_nits must be between " +
+                                 std::to_string(client_profiles::k_min_sdr_nits) + " and " +
+                                 std::to_string(client_profiles::k_max_sdr_nits);
+          send_response(response, output_tree);
+          return;
+        }
+        profile.sdr_nits = nits;
+      }
       profile.mac_address = body.value("mac_address", "");
 
       client_profiles::save_client_profile(name, profile);

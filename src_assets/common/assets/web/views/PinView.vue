@@ -721,6 +721,20 @@
                         <option :value="false">{{ $t('pin.hdr_off') }}</option>
                       </select>
                     </div>
+                    <div>
+                      <label class="mb-1 block text-xs font-medium uppercase tracking-eyebrow text-storm">{{ $t('pin.sdr_nits_label') }}</label>
+                      <input
+                        v-model="client.editProfile.sdr_nits"
+                        type="number"
+                        min="1"
+                        max="10000"
+                        step="1"
+                        autocomplete="off"
+                        class="settings-input text-sm"
+                        :placeholder="$t('pin.sdr_nits_placeholder')"
+                      />
+                      <div class="mt-1 text-xs text-storm">{{ $t('pin.sdr_nits_desc') }}</div>
+                    </div>
                   </div>
                 </section>
               </div>
@@ -1625,6 +1639,7 @@ function editClient(client) {
     output_name: profile.output_name || '',
     color_range: profile.color_range || 0,
     hdr: profile.hdr ?? null,
+    sdr_nits: profile.sdr_nits ?? null,
     mac_address: profile.mac_address || ''
   }
   currentEditingClient = client
@@ -1651,7 +1666,11 @@ function cancelEdit(client) {
 }
 
 function saveClient(client) {
-  const profileData = client.editProfile
+  // The number input hands back '' when cleared; that has to reach the host as
+  // null (no override), not as a number it would store as a real setting.
+  const profileData = { ...client.editProfile }
+  const nits = parseInt(profileData.sdr_nits, 10)
+  profileData.sdr_nits = Number.isFinite(nits) && nits >= 1 && nits <= 10000 ? nits : null
   saveClientAPI(client)
     .then(() => {
       client.editing = false

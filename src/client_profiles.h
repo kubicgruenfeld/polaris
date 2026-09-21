@@ -15,6 +15,12 @@
 
 namespace client_profiles {
 
+  /// Accepted range for client_profile_t::sdr_nits. Below the floor SDR is
+  /// indistinguishable from black; the ceiling is well past any display's
+  /// sustained full-screen output.
+  constexpr int k_min_sdr_nits = 1;
+  constexpr int k_max_sdr_nits = 10000;
+
   /**
    * @brief Per-client display profile.
    *
@@ -25,6 +31,16 @@ namespace client_profiles {
     std::string output_name;            ///< Which display output to use (e.g. "HDMI-A-1")
     std::optional<int> color_range;     ///< Override color_range: 0 = client, 1 = limited, 2 = full
     std::optional<bool> hdr;            ///< Override HDR enable/disable for this client
+    /**
+     * @brief Override the SDR reference white, in nits, for this client.
+     *
+     * Reaches the nested gamescope as --hdr-sdr-content-nits, which decides how
+     * bright SDR content is rendered inside an HDR output. Unset means the host
+     * setting stands. The host default of 203 is BT.2408 reference white, a
+     * mastering-environment figure: a TV in a lit room usually wants less, a
+     * handheld often wants the default, and the same host streams to both.
+     */
+    std::optional<int> sdr_nits;
     std::string mac_address;            ///< MAC address for Wake-on-LAN (e.g. "AA:BB:CC:DD:EE:FF")
   };
 

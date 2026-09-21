@@ -69,6 +69,17 @@ namespace client_profiles {
         profile.hdr = value["hdr"].get<bool>();
       }
 
+      if (value.contains("sdr_nits") && value["sdr_nits"].is_number_integer()) {
+        const auto nits = value["sdr_nits"].get<int>();
+        if (nits >= k_min_sdr_nits && nits <= k_max_sdr_nits) {
+          profile.sdr_nits = nits;
+        } else {
+          BOOST_LOG(warning) << "client_profiles: Ignoring out-of-range sdr_nits "sv << nits
+                             << " for client \""sv << name << "\"; expected "sv
+                             << k_min_sdr_nits << '-' << k_max_sdr_nits;
+        }
+      }
+
       if (value.contains("mac_address") && value["mac_address"].is_string()) {
         profile.mac_address = value["mac_address"].get<std::string>();
       }
@@ -77,6 +88,7 @@ namespace client_profiles {
                       << " output_name="sv << (profile.output_name.empty() ? "(default)"s : profile.output_name)
                       << " color_range="sv << (profile.color_range.has_value() ? std::to_string(profile.color_range.value()) : "(default)"s)
                       << " hdr="sv << (profile.hdr.has_value() ? (profile.hdr.value() ? "true"s : "false"s) : "(default)"s)
+                      << " sdr_nits="sv << (profile.sdr_nits.has_value() ? std::to_string(profile.sdr_nits.value()) : "(default)"s)
                       << " mac_address="sv << (profile.mac_address.empty() ? "(none)"s : profile.mac_address);
 
       profiles[name] = std::move(profile);
@@ -112,6 +124,7 @@ namespace client_profiles {
       if (!profile.output_name.empty()) entry["output_name"] = profile.output_name;
       if (profile.color_range.has_value()) entry["color_range"] = profile.color_range.value();
       if (profile.hdr.has_value()) entry["hdr"] = profile.hdr.value();
+      if (profile.sdr_nits.has_value()) entry["sdr_nits"] = profile.sdr_nits.value();
       if (!profile.mac_address.empty()) entry["mac_address"] = profile.mac_address;
       root[name] = entry;
     }
@@ -140,6 +153,13 @@ namespace client_profiles {
         entry["hdr"] = profile.hdr.value();
       } else {
         entry["hdr"] = nullptr;
+      }
+      // Same reasoning as hdr: unset has to survive the round trip as null,
+      // not as a number the next save would read back as a real override.
+      if (profile.sdr_nits.has_value()) {
+        entry["sdr_nits"] = profile.sdr_nits.value();
+      } else {
+        entry["sdr_nits"] = nullptr;
       }
       entry["mac_address"] = profile.mac_address;
       root[name] = entry;
