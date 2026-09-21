@@ -92,6 +92,11 @@ namespace platf {
     /// Wait between connection attempts, so a missing socket cannot make every
     /// motion event rebuild a sender.
     constexpr auto k_reconnect_interval = 1s;
+
+    /// How long a connection that answered may go without offering a device
+    /// before it is treated as dead. Bounds the window in which input is
+    /// swallowed by a handshake that is never going to finish.
+    constexpr auto k_handshake_deadline = 2s;
   }  // namespace
 
   struct ei_virtual_input_t::impl_t {
@@ -106,6 +111,7 @@ namespace platf {
     /// host uinput instead of vanishing into a compositor that never started.
     bool connect_failed = false;
     std::chrono::steady_clock::time_point next_connect_attempt {};
+    std::chrono::steady_clock::time_point connected_at {};
     /// Last absolute position, so absolute input can be sent as relative motion.
     std::optional<std::pair<double, double>> last_absolute;
 
@@ -359,11 +365,24 @@ namespace platf {
         return false;
       }
 
+      const auto now = std::chrono::steady_clock::now();
+
       if (ctx) {
-        return emulating;
+        if (emulating) {
+          return true;
+        }
+        // The socket answered but no device ever arrived. Let go of it rather
+        // than keep swallowing input into a connection that is not going to
+        // carry any; owns_input() then lets uinput have the events back.
+        if (now - connected_at > k_handshake_deadline) {
+          BOOST_LOG(warning) << "EI virtual input: gamescope accepted the connection but never offered a "sv
+                             << "device; mouse and keyboard will use host uinput"sv;
+          disconnect_locked();
+          connect_failed = true;
+        }
+        return false;
       }
 
-      const auto now = std::chrono::steady_clock::now();
       if (now < next_connect_attempt) {
         return false;
       }
@@ -399,6 +418,7 @@ namespace platf {
       }
       logged_unavailable = false;
       connect_failed = false;
+      connected_at = now;
 
       drain_locked();
       pumper_stop = false;
