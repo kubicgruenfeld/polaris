@@ -7,6 +7,7 @@
 // standard includes
 #include <cstdint>
 #include <memory>
+#include <string_view>
 
 // local includes
 #include "src/platform/common.h"
@@ -45,6 +46,7 @@ namespace platf {
     bool scroll(int high_res_distance);
     bool hscroll(int high_res_distance);
     bool keyboard_update(std::uint16_t modcode, bool release);
+    bool unicode(std::string_view hex_unicode);
     bool should_block_host_fallback();
     void reset();
 

@@ -11,12 +11,21 @@
 #ifdef POLARIS_BUILD_EI_VIRTUAL_INPUT
   // standard includes
   #include <algorithm>
+  #include <atomic>
+  #include <cctype>
+  #include <cerrno>
+  #include <chrono>
   #include <cmath>
   #include <cstdlib>
+  #include <cstring>
   #include <mutex>
   #include <optional>
-  #include <poll.h>
   #include <string>
+  #include <thread>
+
+  #include <fcntl.h>
+  #include <poll.h>
+  #include <unistd.h>
 
   // lib includes
   #include <inputtino/keyboard.hpp>
@@ -68,8 +77,21 @@ namespace platf {
       return key->second.linux_code;
     }
 
-    // Moonlight sends 120 units per notch, the same convention as WHEEL_DELTA.
+    /**
+     * @brief Scroll scale, in Moonlight units per wheel notch.
+     *
+     * gamescope's wlserver_mousewheel() takes notches, not axis units: it
+     * passes the value straight through as the continuous wl_pointer axis and
+     * derives axis_value120 from it as value * WLR_POINTER_AXIS_DISCRETE_STEP.
+     * Its own physical-input paths feed it value120 / 120.0 (LibInputHandler
+     * and the Wayland backend both do), so one notch has to arrive here as
+     * 1.0 to scroll like the mouse plugged into the host.
+     */
     constexpr double k_scroll_units_per_notch = 120.0;
+
+    /// Wait between connection attempts, so a missing socket cannot make every
+    /// motion event rebuild a sender.
+    constexpr auto k_reconnect_interval = 1s;
   }  // namespace
 
   struct ei_virtual_input_t::impl_t {
@@ -80,11 +102,58 @@ namespace platf {
     std::uint32_t sequence = 0;
     bool logged_ready = false;
     bool logged_unavailable = false;
+    /// Set when the EIS socket could not be reached, so input can fall back to
+    /// host uinput instead of vanishing into a compositor that never started.
+    bool connect_failed = false;
+    std::chrono::steady_clock::time_point next_connect_attempt {};
     /// Last absolute position, so absolute input can be sent as relative motion.
     std::optional<std::pair<double, double>> last_absolute;
 
+    /// Reader thread: the EIS handshake needs several round trips, and none of
+    /// them may happen on the caller's thread — Polaris runs task_pool.start(1),
+    /// so a blocking wait here would also hold up key repeat, the click delay
+    /// and the force-shutdown timer.
+    std::thread pumper;
+    std::atomic<bool> pumper_stop {false};
+    std::atomic<bool> pumper_exited {false};
+    int wake_fds[2] = {-1, -1};
+
     ~impl_t() {
-      disconnect();
+      shutdown();
+      close_wake_pipe();
+    }
+
+    bool open_wake_pipe() {
+      if (wake_fds[0] >= 0) {
+        return true;
+      }
+      if (::pipe2(wake_fds, O_CLOEXEC | O_NONBLOCK) != 0) {
+        wake_fds[0] = wake_fds[1] = -1;
+        return false;
+      }
+      return true;
+    }
+
+    void close_wake_pipe() {
+      for (int &fd : wake_fds) {
+        if (fd >= 0) {
+          ::close(fd);
+          fd = -1;
+        }
+      }
+    }
+
+    void wake_pumper() {
+      if (wake_fds[1] >= 0) {
+        const char byte = 0;
+        [[maybe_unused]] const auto written = ::write(wake_fds[1], &byte, 1);
+      }
+    }
+
+    void drain_wake_pipe() {
+      char buffer[64];
+      while (wake_fds[0] >= 0 && ::read(wake_fds[0], buffer, sizeof(buffer)) > 0) {
+      }
     }
 
     void release_device() {
@@ -96,22 +165,73 @@ namespace platf {
       last_absolute.reset();
     }
 
-    void disconnect() {
+    /// Drop the connection. Caller holds the mutex; the reader thread notices
+    /// the null context and retires itself.
+    void disconnect_locked() {
       release_device();
       if (ctx) {
         ei_unref(ctx);
         ctx = nullptr;
       }
       logged_ready = false;
+      wake_pumper();
+    }
+
+    /**
+     * @brief Reap the reader thread.
+     *
+     * @param force Stop a thread that is still running. Only ever called with
+     *              the mutex released — the thread takes it on every pass, so
+     *              joining while holding it would deadlock. Without @p force
+     *              this joins only a thread that has already run to completion,
+     *              which is safe from under the lock.
+     */
+    void join_pumper(bool force) {
+      if (!pumper.joinable()) {
+        return;
+      }
+      if (force) {
+        pumper_stop = true;
+        wake_pumper();
+      } else if (!pumper_exited) {
+        return;
+      }
+      pumper.join();
+      pumper_stop = false;
+      pumper_exited = false;
+      drain_wake_pipe();
+    }
+
+    void shutdown() {
+      {
+        std::scoped_lock lock(mutex);
+        disconnect_locked();
+      }
+      join_pumper(true);
     }
 
     /**
      * @brief Whether this host streams through a Polaris-owned gamescope.
      *
-     * Every other mode either has the Wayland route or wants host uinput.
+     * The same pair of signals process.cpp classifies a gamescope launch by
+     * (streaming_launch_requests_private_family). Every other mode either has
+     * the Wayland route or wants host uinput.
      */
     bool gamescope_runtime_active() const {
-      return config::video.linux_display.stream_mode == "gamescope_stream"sv;
+      return config::video.linux_display.stream_mode == "gamescope_stream"sv ||
+             config::video.linux_display.private_runtime == "gamescope"sv;
+    }
+
+    /**
+     * @brief Whether an event we cannot deliver should still be swallowed.
+     *
+     * Only once the EIS socket has answered. A host configured for gamescope
+     * whose compositor never came up has nothing to receive the event, and
+     * claiming it there would leave that host with no input at all rather than
+     * falling back to uinput.
+     */
+    bool owns_input() const {
+      return gamescope_runtime_active() && !connect_failed;
     }
 
     /**
@@ -130,124 +250,163 @@ namespace platf {
       return std::string {display && *display ? display : "gamescope-0"} + "-ei";
     }
 
-    /**
-     * @brief Drain pending EIS events, optionally waiting for the handshake.
-     *
-     * The connection takes a few round trips before a device exists, so the
-     * first call after connecting waits briefly rather than dropping the input
-     * that triggered it.
-     */
-    void pump(int timeout_ms) {
+    /// Handle everything the server has already sent. Never blocks.
+    void drain_locked() {
       if (!ctx) {
         return;
       }
 
-      const int fd = ei_get_fd(ctx);
-      for (;;) {
-        if (fd >= 0 && timeout_ms >= 0) {
-          pollfd pfd {fd, POLLIN, 0};
-          if (poll(&pfd, 1, timeout_ms) <= 0) {
-            return;
-          }
-        }
-        timeout_ms = 0;
+      ei_dispatch(ctx);
 
-        ei_dispatch(ctx);
-
-        bool handled_any = false;
-        while (ei_event *event = ei_get_event(ctx)) {
-          handled_any = true;
-          switch (ei_event_get_type(event)) {
-            case EI_EVENT_SEAT_ADDED:
-              ei_seat_bind_capabilities(
-                ei_event_get_seat(event),
-                EI_DEVICE_CAP_POINTER,
-                EI_DEVICE_CAP_POINTER_ABSOLUTE,
-                EI_DEVICE_CAP_BUTTON,
-                EI_DEVICE_CAP_SCROLL,
-                EI_DEVICE_CAP_KEYBOARD,
-                nullptr
-              );
-              break;
-            case EI_EVENT_DEVICE_ADDED:
-              release_device();
-              device = ei_device_ref(ei_event_get_device(event));
-              break;
-            case EI_EVENT_DEVICE_RESUMED:
-              if (device) {
-                ei_device_start_emulating(device, ++sequence);
-                emulating = true;
-                if (!logged_ready) {
-                  BOOST_LOG(info) << "EI virtual input: routing mouse and keyboard to the gamescope session on ["sv
-                                  << socket_name() << ']';
-                  logged_ready = true;
-                }
+      while (ei_event *event = ei_get_event(ctx)) {
+        switch (ei_event_get_type(event)) {
+          case EI_EVENT_SEAT_ADDED:
+            ei_seat_bind_capabilities(
+              ei_event_get_seat(event),
+              EI_DEVICE_CAP_POINTER,
+              EI_DEVICE_CAP_POINTER_ABSOLUTE,
+              EI_DEVICE_CAP_BUTTON,
+              EI_DEVICE_CAP_SCROLL,
+              EI_DEVICE_CAP_KEYBOARD,
+              nullptr
+            );
+            break;
+          case EI_EVENT_DEVICE_ADDED:
+            release_device();
+            device = ei_device_ref(ei_event_get_device(event));
+            break;
+          case EI_EVENT_DEVICE_RESUMED:
+            if (device) {
+              ei_device_start_emulating(device, ++sequence);
+              emulating = true;
+              if (!logged_ready) {
+                BOOST_LOG(info) << "EI virtual input: routing mouse and keyboard to the gamescope session on ["sv
+                                << socket_name() << ']';
+                logged_ready = true;
               }
-              break;
-            case EI_EVENT_DEVICE_PAUSED:
-              emulating = false;
-              break;
-            case EI_EVENT_DEVICE_REMOVED:
-              release_device();
-              break;
-            case EI_EVENT_DISCONNECT:
-              BOOST_LOG(info) << "EI virtual input: gamescope closed the input socket; "sv
-                              << "reconnecting on the next input event"sv;
-              ei_event_unref(event);
-              disconnect();
-              return;
-            default:
-              break;
-          }
-          ei_event_unref(event);
+            }
+            break;
+          case EI_EVENT_DEVICE_PAUSED:
+            emulating = false;
+            break;
+          case EI_EVENT_DEVICE_REMOVED:
+            release_device();
+            break;
+          case EI_EVENT_DISCONNECT:
+            BOOST_LOG(info) << "EI virtual input: gamescope closed the input socket; "sv
+                            << "reconnecting on the next input event"sv;
+            ei_event_unref(event);
+            disconnect_locked();
+            return;
+          default:
+            break;
         }
-
-        if (!handled_any || emulating) {
-          return;
-        }
+        ei_event_unref(event);
       }
     }
 
+    /// Reader thread body.
+    void pump_loop() {
+      for (;;) {
+        int fd = -1;
+        {
+          std::scoped_lock lock(mutex);
+          if (pumper_stop || !ctx) {
+            break;
+          }
+          fd = ei_get_fd(ctx);
+        }
+        if (fd < 0) {
+          break;
+        }
+
+        pollfd pfds[2] = {
+          {fd, POLLIN, 0},
+          {wake_fds[0], POLLIN, 0},
+        };
+        if (::poll(pfds, 2, -1) < 0 && errno != EINTR) {
+          break;
+        }
+        if (pumper_stop) {
+          break;
+        }
+
+        std::scoped_lock lock(mutex);
+        if (pumper_stop || !ctx) {
+          break;
+        }
+        drain_locked();
+      }
+      // Last thing this thread touches: join_pumper() reads it to decide
+      // whether it may join from under the mutex.
+      pumper_exited = true;
+    }
+
     /**
-     * @brief Connect and wait for gamescope to hand us an emulating device.
+     * @brief Connect if needed and report whether a device is emulating.
+     *
+     * Never blocks. The handshake runs on the reader thread, so the first
+     * event of a session is dropped rather than delivered late; every event
+     * after it — a millisecond or so later — finds the device ready.
      */
     bool ensure_ready() {
+      join_pumper(false);
+
       if (!gamescope_runtime_active()) {
-        disconnect();
+        if (ctx) {
+          disconnect_locked();
+        }
         return false;
       }
 
-      if (ctx && emulating) {
-        pump(0);
-      }
-      if (ctx && emulating) {
-        return true;
+      if (ctx) {
+        return emulating;
       }
 
+      const auto now = std::chrono::steady_clock::now();
+      if (now < next_connect_attempt) {
+        return false;
+      }
+      next_connect_attempt = now + k_reconnect_interval;
+
+      if (pumper.joinable()) {
+        // The previous reader has not retired yet; try again after the backoff.
+        return false;
+      }
+      if (!open_wake_pipe()) {
+        connect_failed = true;
+        return false;
+      }
+
+      ctx = ei_new_sender(nullptr);
       if (!ctx) {
-        ctx = ei_new_sender(nullptr);
-        if (!ctx) {
-          return false;
-        }
-        ei_configure_name(ctx, "polaris");
-
-        const auto socket = socket_name();
-        if (const int rc = ei_setup_backend_socket(ctx, socket.c_str()); rc != 0) {
-          if (!logged_unavailable) {
-            BOOST_LOG(warning) << "EI virtual input: cannot reach gamescope's input socket ["sv << socket
-                               << "]: "sv << strerror(-rc) << "; mouse and keyboard will use host uinput"sv;
-            logged_unavailable = true;
-          }
-          ei_unref(ctx);
-          ctx = nullptr;
-          return false;
-        }
-        logged_unavailable = false;
+        connect_failed = true;
+        return false;
       }
+      ei_configure_name(ctx, "polaris");
 
-      // A fresh connection needs a few round trips before a device exists.
-      pump(ctx && !emulating ? 250 : 0);
-      return ctx != nullptr && emulating;
+      const auto socket = socket_name();
+      if (const int rc = ei_setup_backend_socket(ctx, socket.c_str()); rc != 0) {
+        if (!logged_unavailable) {
+          BOOST_LOG(warning) << "EI virtual input: cannot reach gamescope's input socket ["sv << socket
+                             << "]: "sv << strerror(-rc) << "; mouse and keyboard will use host uinput"sv;
+          logged_unavailable = true;
+        }
+        ei_unref(ctx);
+        ctx = nullptr;
+        connect_failed = true;
+        return false;
+      }
+      logged_unavailable = false;
+      connect_failed = false;
+
+      drain_locked();
+      pumper_stop = false;
+      pumper_exited = false;
+      pumper = std::thread([this] {
+        pump_loop();
+      });
+      return emulating;
     }
 
     /**
@@ -268,6 +427,15 @@ namespace platf {
       ei_device_scroll_delta(device, dx, dy);
       return frame();
     }
+
+    bool send_key(std::uint16_t modcode, bool release) {
+      const auto evdev_keycode = moonlight_key_to_evdev(modcode);
+      if (evdev_keycode < 0) {
+        return false;
+      }
+      ei_device_keyboard_key(device, static_cast<std::uint32_t>(evdev_keycode), !release);
+      return frame();
+    }
   };
 
 #else
@@ -284,8 +452,7 @@ namespace platf {
 
   void ei_virtual_input_t::reset() {
 #ifdef POLARIS_BUILD_EI_VIRTUAL_INPUT
-    std::scoped_lock lock(impl->mutex);
-    impl->disconnect();
+    impl->shutdown();
 #endif
   }
 
@@ -294,7 +461,7 @@ namespace platf {
     std::scoped_lock lock(impl->mutex);
     // Host uinput cannot reach a headless gamescope, and letting it through
     // would drive the host session instead.
-    return impl->gamescope_runtime_active();
+    return impl->owns_input();
 #else
     return false;
 #endif
@@ -307,6 +474,11 @@ namespace platf {
       return false;
     }
     ei_device_pointer_motion(impl->device, delta_x, delta_y);
+    // The pointer has moved out from under the remembered absolute position,
+    // and Moonlight mixes relative drag with absolute taps — keeping the old
+    // anchor would turn the next absolute event into a delta from a stale
+    // origin and the offset would stick for the rest of the session.
+    impl->last_absolute.reset();
     return impl->frame();
 #else
     return false;
@@ -350,7 +522,7 @@ namespace platf {
     if (evdev_button < 0) {
       BOOST_LOG(warning) << "EI virtual input: unknown mouse button: "sv << button;
       // Claim it anyway: falling through would send it to the host session.
-      return impl->gamescope_runtime_active();
+      return impl->owns_input();
     }
     if (!impl->ensure_ready()) {
       return false;
@@ -385,15 +557,56 @@ namespace platf {
   bool ei_virtual_input_t::keyboard_update(std::uint16_t modcode, bool release) {
 #ifdef POLARIS_BUILD_EI_VIRTUAL_INPUT
     std::scoped_lock lock(impl->mutex);
-    const auto evdev_keycode = moonlight_key_to_evdev(modcode);
-    if (evdev_keycode < 0) {
-      return impl->gamescope_runtime_active();
+    if (moonlight_key_to_evdev(modcode) < 0) {
+      return impl->owns_input();
     }
     if (!impl->ensure_ready()) {
       return false;
     }
-    ei_device_keyboard_key(impl->device, static_cast<std::uint32_t>(evdev_keycode), !release);
-    return impl->frame();
+    return impl->send_key(modcode, release);
+#else
+    return false;
+#endif
+  }
+
+  bool ei_virtual_input_t::unicode(std::string_view hex_unicode) {
+#ifdef POLARIS_BUILD_EI_VIRTUAL_INPUT
+    std::scoped_lock lock(impl->mutex);
+    if (!impl->ensure_ready()) {
+      return false;
+    }
+
+    // Same ibus hex entry the Wayland route types: ctrl+shift+u, the
+    // codepoint's hex digits, then release. Whether the focused client picks
+    // it up is its business — what matters is that the text stays inside the
+    // session instead of being typed into the host desktop.
+    const auto send = [this](std::uint16_t modcode, bool release) {
+      return impl->send_key(modcode, release);
+    };
+
+    if (!send(0xA2, false) || !send(0xA0, false) || !send(0x55, false) || !send(0x55, true)) {
+      return false;
+    }
+
+    for (const auto ch : hex_unicode) {
+      std::uint16_t moonlight_code = 0;
+      if (ch >= '0' && ch <= '9') {
+        moonlight_code = static_cast<std::uint16_t>(0x30 + (ch - '0'));
+      } else {
+        const auto upper = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+        if (upper < 'A' || upper > 'F') {
+          BOOST_LOG(warning) << "EI virtual input: unable to find keycode for: "sv << ch;
+          continue;
+        }
+        moonlight_code = static_cast<std::uint16_t>(0x41 + (upper - 'A'));
+      }
+
+      if (!send(moonlight_code, false) || !send(moonlight_code, true)) {
+        return false;
+      }
+    }
+
+    return send(0xA0, true) && send(0xA2, true);
 #else
     return false;
 #endif
